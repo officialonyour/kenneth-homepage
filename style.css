@@ -617,6 +617,7 @@ main {
   font-weight: 700;
   line-height: 1.45;
   display: -webkit-box;
+  line-clamp: 2;
   -webkit-line-clamp: 2;
   -webkit-box-orient: vertical;
 }
@@ -733,33 +734,624 @@ main {
   transform: translate(-50%, 0);
 }
 
+/* =========================================================
+   KENNETH — MOBILE COMPACT TYPOGRAPHY & SCALE REFINEMENT
+   모바일 컴팩트 디자인 보정 섹션
+   ========================================================= */
+
+:root {
+  --radius: 14px;
+  --page-width: 420px;
+  --line: rgba(255, 255, 255, 0.085);
+  --line-strong: rgba(255, 255, 255, 0.16);
+  --muted: #96938d;
+  --accent: #f17243;
+}
+
+body {
+  font-family:
+    -apple-system,
+    BlinkMacSystemFont,
+    "Pretendard Variable",
+    Pretendard,
+    "Noto Sans KR",
+    "Segoe UI",
+    sans-serif;
+  letter-spacing: -0.014em;
+  text-rendering: optimizeLegibility;
+}
+
+.app-shell {
+  background:
+    linear-gradient(
+      180deg,
+      #0a0a0a 0%,
+      #080808 100%
+    );
+}
+
+/* =========================
+   상단 헤더
+   ========================= */
+
+.site-header {
+  height: calc(
+    58px + env(safe-area-inset-top)
+  );
+
+  padding:
+    calc(
+      9px + env(safe-area-inset-top)
+    )
+    16px
+    7px;
+}
+
+.site-brand img {
+  width: 112px;
+  height: 34px;
+
+  object-fit: contain;
+  object-position: left center;
+}
+
+.menu-button {
+  width: 36px;
+  height: 36px;
+}
+
+.menu-button span {
+  right: 1px;
+
+  width: 23px;
+}
+
+.menu-button span:first-child {
+  top: 12px;
+}
+
+.menu-button span:last-child {
+  top: 21px;
+
+  width: 16px;
+}
+
+/* =========================
+   모바일 메뉴
+   ========================= */
+
+.mobile-drawer {
+  width: min(
+    82vw,
+    318px
+  );
+
+  padding:
+    calc(
+      16px + env(safe-area-inset-top)
+    )
+    17px
+    calc(
+      20px + env(safe-area-inset-bottom)
+    );
+}
+
+.drawer-head {
+  padding-bottom: 14px;
+
+  font-size: 11px;
+}
+
+.drawer-nav {
+  margin-top: 12px;
+}
+
+.drawer-nav a {
+  min-height: 54px;
+
+  gap: 12px;
+
+  font-size: 16px;
+}
+
+.drawer-nav a span {
+  font-size: 9px;
+}
+
+/* =========================
+   첫 화면
+   ========================= */
+
+.hero-section {
+  min-height: 354px;
+
+  padding:
+    32px
+    16px
+    18px;
+}
+
+.hero-section::after {
+  height: 47%;
+}
+
+.hero-copy {
+  width: 76%;
+}
+
+.eyebrow {
+  margin-bottom: 10px;
+
+  font-size: 9px;
+  letter-spacing: 0.13em;
+}
+
+.hero-copy h1 {
+  font-family:
+    -apple-system,
+    BlinkMacSystemFont,
+    "Pretendard Variable",
+    Pretendard,
+    "Noto Sans KR",
+    sans-serif;
+
+  font-size: clamp(
+    36px,
+    10.6vw,
+    44px
+  );
+
+  font-weight: 900;
+  line-height: 0.93;
+  letter-spacing: -0.065em;
+}
+
+.hero-description {
+  margin-top: 15px;
+
+  font-size: 12.5px;
+  line-height: 1.55;
+}
+
+.hero-actions {
+  gap: 14px;
+
+  margin-top: 19px;
+}
+
+.primary-button {
+  min-height: 42px;
+
+  padding:
+    0
+    14px;
+
+  gap: 12px;
+
+  border-radius: 9px;
+
+  font-size: 12px;
+}
+
+.primary-button span {
+  font-size: 15px;
+}
+
+.text-button {
+  font-size: 11px;
+
+  text-underline-offset: 4px;
+}
+
+.hero-art {
+  top: 24px;
+  right: -48px;
+
+  width: 205px;
+  height: 318px;
+
+  opacity: 0.72;
+}
+
+.hero-index {
+  right: 16px;
+  bottom: 13px;
+
+  font-size: 8px;
+}
+
+/* =========================
+   공통 섹션
+   ========================= */
+
+.content-section,
+.links-section {
+  padding:
+    21px
+    16px;
+}
+
+.section-heading {
+  margin-bottom: 13px;
+}
+
+.section-heading > div {
+  gap: 8px;
+}
+
+.section-number {
+  font-size: 8px;
+}
+
+.section-heading h2 {
+  font-size: 14.5px;
+  font-weight: 800;
+  letter-spacing: -0.02em;
+}
+
+.section-status,
+.section-action {
+  font-size: 8.5px;
+}
+
+/* =========================
+   최신 음원
+   ========================= */
+
+.latest-release-wrap {
+  grid-template-columns:
+    106px
+    minmax(
+      0,
+      1fr
+    );
+
+  gap: 13px;
+}
+
+.release-art {
+  width: 106px;
+
+  border-radius: 10px;
+}
+
+.release-tag {
+  margin-bottom: 3px;
+
+  font-size: 8px;
+}
+
+.release-title {
+  font-family:
+    -apple-system,
+    BlinkMacSystemFont,
+    "Pretendard Variable",
+    Pretendard,
+    "Noto Sans KR",
+    sans-serif;
+
+  font-size: 27px;
+  font-weight: 850;
+  line-height: 1;
+  letter-spacing: -0.05em;
+}
+
+.release-meta {
+  margin-top: 5px;
+
+  font-size: 10px;
+}
+
+.platform-pills {
+  gap: 5px;
+
+  margin-top: 12px;
+}
+
+.platform-pill {
+  min-height: 30px;
+
+  padding:
+    0
+    9px;
+
+  font-size: 9px;
+}
+
+/* =========================
+   작업 목록
+   ========================= */
+
+.works-grid {
+  grid-auto-columns: 39%;
+
+  gap: 9px;
+}
+
+.works-grid.is-expanded {
+  gap:
+    12px
+    9px;
+}
+
+.work-card img {
+  border-radius: 9px;
+}
+
+.work-copy {
+  padding-top: 7px;
+}
+
+.work-title {
+  font-size: 11.5px;
+  line-height: 1.25;
+}
+
+.work-year {
+  margin-top: 2px;
+
+  font-size: 9.5px;
+}
+
+/* =========================
+   비트 판매
+   ========================= */
+
+.beats-panel {
+  margin:
+    14px
+    16px;
+
+  padding:
+    17px
+    16px;
+
+  border-radius: 13px;
+}
+
+.beats-topline {
+  font-size: 8px;
+}
+
+.beats-panel h2 {
+  margin-top: 13px;
+
+  font-family:
+    -apple-system,
+    BlinkMacSystemFont,
+    "Pretendard Variable",
+    Pretendard,
+    "Noto Sans KR",
+    sans-serif;
+
+  font-size: 23px;
+  font-weight: 900;
+  line-height: 1.03;
+  letter-spacing: -0.045em;
+}
+
+.beats-panel p {
+  margin-top: 10px;
+
+  font-size: 11.5px;
+  line-height: 1.5;
+}
+
+.beats-button {
+  min-height: 41px;
+
+  margin-top: 15px;
+
+  padding:
+    0
+    13px;
+
+  border-radius: 9px;
+
+  font-size: 11.5px;
+}
+
+/* =========================
+   영상 / ONYOUR
+   ========================= */
+
+.media-grid {
+  gap: 8px;
+
+  padding:
+    0
+    16px
+    21px;
+}
+
+.media-card {
+  padding: 11px;
+
+  border-radius: 12px;
+}
+
+.media-card-head {
+  gap: 6px;
+
+  margin-bottom: 9px;
+}
+
+.media-card-head span {
+  font-size: 8px;
+}
+
+.media-card-head strong {
+  font-size: 8.5px;
+}
+
+.video-thumbnail {
+  border-radius: 8px;
+}
+
+.play-badge {
+  width: 35px;
+  height: 35px;
+
+  font-size: 11px;
+}
+
+.media-card-body p {
+  min-height: 33px;
+
+  margin:
+    8px
+    0
+    9px;
+
+  font-size: 9.5px;
+  line-height: 1.4;
+}
+
+.outline-button {
+  min-height: 34px;
+
+  padding:
+    0
+    9px;
+
+  border-radius: 8px;
+
+  font-size: 8.8px;
+}
+
+.onyour-wordmark {
+  margin:
+    15px
+    0
+    10px;
+
+  font-family:
+    -apple-system,
+    BlinkMacSystemFont,
+    "Pretendard Variable",
+    Pretendard,
+    "Noto Sans KR",
+    sans-serif;
+
+  font-size: 22px;
+  font-weight: 900;
+  letter-spacing: -0.045em;
+}
+
+.onyour-card > p {
+  min-height: 57px;
+
+  margin-bottom: 10px;
+
+  font-size: 9.5px;
+  line-height: 1.5;
+}
+
+/* =========================
+   외부 링크
+   ========================= */
+
+.listen-link {
+  min-height: 45px;
+
+  padding:
+    0
+    11px;
+
+  font-size: 10.5px;
+}
+
+.listen-link b {
+  font-size: 12px;
+}
+
+/* =========================
+   푸터
+   ========================= */
+
+.site-footer {
+  padding:
+    16px
+    16px
+    calc(
+      16px + env(safe-area-inset-bottom)
+    );
+}
+
+.site-footer img {
+  width: 92px;
+  height: 29px;
+}
+
+.site-footer p {
+  font-size: 8px;
+}
+
+/* =========================
+   아주 작은 모바일
+   ========================= */
+
 @media (max-width: 360px) {
+  .hero-section {
+    min-height: 338px;
+  }
+
   .hero-copy {
-    width: 76%;
+    width: 79%;
   }
 
   .hero-copy h1 {
-    font-size: 40px;
+    font-size: 34px;
+  }
+
+  .hero-art {
+    right: -55px;
+
+    width: 190px;
+    height: 298px;
   }
 
   .latest-release-wrap {
-    grid-template-columns: 112px minmax(0, 1fr);
-    gap: 13px;
+    grid-template-columns:
+      98px
+      minmax(
+        0,
+        1fr
+      );
+
+    gap: 11px;
   }
 
   .release-art {
-    width: 112px;
+    width: 98px;
   }
 
   .release-title {
-    font-size: 33px;
+    font-size: 24px;
   }
 
   .platform-pill {
-    padding: 0 8px;
-    font-size: 10px;
+    min-height: 28px;
+
+    padding:
+      0
+      7px;
+
+    font-size: 8.5px;
+  }
+
+  .media-grid {
+    gap: 7px;
+  }
+
+  .media-card {
+    padding: 10px;
   }
 }
+
+/* =========================
+   모션 최소화 설정
+   ========================= */
 
 @media (prefers-reduced-motion: reduce) {
   *,
