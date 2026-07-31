@@ -1,0 +1,167 @@
+<!doctype html>
+<html lang="ko">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+  <meta name="theme-color" content="#0a0b0e" />
+  <title>이휘근 홈페이지 관리자</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=Noto+Sans+KR:wght@400;500;600;700;800&family=Space+Grotesk:wght@500;600;700&display=swap" rel="stylesheet" />
+  <link rel="stylesheet" href="/admin/admin.css" />
+</head>
+<body>
+  <main class="admin-shell">
+    <section class="login-screen" id="loginScreen">
+      <div class="login-card">
+        <span class="login-mark">HW</span>
+        <p>PRODUCER SIGNAL CONTROL</p>
+        <h1>관리자 로그인</h1>
+        <form id="loginForm">
+          <label for="adminPassword">관리자 비밀번호</label>
+          <input id="adminPassword" name="password" type="password" inputmode="numeric" autocomplete="current-password" required />
+          <button type="submit">관리자 메뉴 열기</button>
+        </form>
+        <span class="login-message" id="loginMessage"></span>
+        <a href="/">홈페이지로 돌아가기</a>
+      </div>
+    </section>
+
+    <section class="admin-app" id="adminApp" hidden>
+      <header class="admin-header">
+        <div>
+          <span>HWEGEUN</span>
+          <strong>CONTROL ROOM</strong>
+        </div>
+        <div class="header-actions">
+          <a href="/" target="_blank" rel="noreferrer">사이트 보기</a>
+          <button id="logoutButton" type="button">로그아웃</button>
+        </div>
+      </header>
+
+      <nav class="admin-tabs" aria-label="관리 메뉴">
+        <button class="admin-tab is-active" type="button" data-panel="brandPanel">브랜드</button>
+        <button class="admin-tab" type="button" data-panel="releasePanel">음원</button>
+        <button class="admin-tab" type="button" data-panel="videoPanel">영상</button>
+      </nav>
+
+      <section class="admin-panel is-active" id="brandPanel">
+        <div class="panel-title">
+          <div><small>BRAND & LINKS</small><h2>홈페이지 기본 정보</h2></div>
+          <span>저장 즉시 홈페이지 반영</span>
+        </div>
+
+        <form class="admin-form" id="settingsForm">
+          <div class="field-grid two">
+            <label>표시 이름<input name="display_name" required /></label>
+            <label>영문 브랜드명<input name="english_name" required /></label>
+          </div>
+          <label>직함<input name="role" placeholder="HIPHOP / EDM PRODUCER" /></label>
+          <label>상단 키워드<input name="eyebrow" placeholder="BEAT · VIBE · ENERGY" /></label>
+          <label>메인 문구<textarea name="hero_statement" rows="3" placeholder="줄바꿈도 반영됩니다."></textarea></label>
+          <label>소개 문구<textarea name="hero_description" rows="4"></textarea></label>
+          <div class="field-grid two">
+            <label>메인 포인트 색상<input name="accent_color" type="color" /></label>
+            <label>보조 포인트 색상<input name="accent_color_2" type="color" /></label>
+          </div>
+
+          <div class="form-divider"><span>PLATFORM LINKS</span></div>
+          <label>Spotify<input name="spotify_url" type="url" placeholder="https://..." /></label>
+          <label>Apple Music<input name="apple_music_url" type="url" placeholder="https://..." /></label>
+          <label>YouTube 채널<input name="youtube_url" type="url" placeholder="https://..." /></label>
+          <label>Instagram<input name="instagram_url" type="url" placeholder="https://..." /></label>
+          <label>Melon<input name="melon_url" type="url" placeholder="https://..." /></label>
+          <label>SoundCloud<input name="soundcloud_url" type="url" placeholder="https://..." /></label>
+          <label>BeatStars<input name="beatstars_url" type="url" placeholder="https://..." /></label>
+          <label>오뉴월 홈페이지<input name="onyour_url" type="url" placeholder="https://onyour-homepage.pages.dev/" /></label>
+          <label>문의 이메일<input name="contact_email" type="email" /></label>
+          <button class="save-button" type="submit">기본 정보 저장</button>
+        </form>
+      </section>
+
+      <section class="admin-panel" id="releasePanel" hidden>
+        <div class="panel-title">
+          <div><small>DISCOGRAPHY</small><h2>발매 음원 관리</h2></div>
+          <button class="small-button" id="newReleaseButton" type="button">+ 새 음원</button>
+        </div>
+
+        <div class="item-list" id="releaseList"></div>
+
+        <form class="admin-form edit-form" id="releaseForm" hidden>
+          <div class="edit-form-head">
+            <div><small>RELEASE EDITOR</small><h3 id="releaseFormTitle">새 음원</h3></div>
+            <button type="button" class="close-form" id="closeReleaseForm">×</button>
+          </div>
+          <input name="id" type="hidden" />
+          <label>음원명<input name="title" required /></label>
+          <div class="field-grid two">
+            <label>구분<input name="release_type" placeholder="Single / EP / Album" /></label>
+            <label>발매일<input name="release_date" type="date" /></label>
+          </div>
+          <div class="field-grid two">
+            <label>장르<input name="genre" placeholder="HIPHOP / EDM" /></label>
+            <label>트랙 수<input name="track_count" type="number" min="1" value="1" /></label>
+          </div>
+          <label>간단 설명<textarea name="description" rows="3"></textarea></label>
+
+          <div class="cover-editor">
+            <img id="releaseCoverPreview" src="/assets/profile-logo.png" alt="앨범 자켓 미리보기" />
+            <div>
+              <label>앨범 대표 링크
+                <input name="primary_url" type="url" placeholder="Spotify, Apple Music, YouTube 등의 앨범 링크" />
+              </label>
+              <button class="outline-button" id="previewLinkButton" type="button">링크에서 제목·자켓 가져오기</button>
+              <label class="upload-label">또는 앨범 자켓 직접 업로드
+                <input id="releaseCoverFile" type="file" accept="image/jpeg,image/png,image/webp,image/gif" />
+              </label>
+              <input name="cover_url" type="hidden" />
+              <span class="upload-status" id="uploadStatus"></span>
+            </div>
+          </div>
+
+          <div class="form-divider"><span>음원별 듣기 링크</span></div>
+          <label>Spotify<input name="spotify_url" type="url" /></label>
+          <label>Apple Music<input name="apple_music_url" type="url" /></label>
+          <label>Melon<input name="melon_url" type="url" /></label>
+          <label>YouTube / Music Video<input name="youtube_url" type="url" /></label>
+          <label>SoundCloud<input name="soundcloud_url" type="url" /></label>
+          <label>BeatStars<input name="beatstars_url" type="url" /></label>
+          <div class="field-grid two check-grid">
+            <label class="check-label"><input name="is_featured" type="checkbox" /> 최신 대표 음원으로 표시</label>
+            <label>표시 순서<input name="sort_order" type="number" min="0" value="0" /></label>
+          </div>
+          <button class="save-button" type="submit">음원 저장</button>
+        </form>
+      </section>
+
+      <section class="admin-panel" id="videoPanel" hidden>
+        <div class="panel-title">
+          <div><small>YOUTUBE VISUAL</small><h2>뮤직비디오 관리</h2></div>
+          <button class="small-button" id="newVideoButton" type="button">+ 새 영상</button>
+        </div>
+
+        <div class="item-list" id="videoList"></div>
+
+        <form class="admin-form edit-form" id="videoForm" hidden>
+          <div class="edit-form-head">
+            <div><small>VIDEO EDITOR</small><h3 id="videoFormTitle">새 영상</h3></div>
+            <button type="button" class="close-form" id="closeVideoForm">×</button>
+          </div>
+          <input name="id" type="hidden" />
+          <label>영상 제목<input name="title" required /></label>
+          <label>YouTube 링크<input name="youtube_url" type="url" required placeholder="https://youtu.be/..." /></label>
+          <div class="field-grid two">
+            <label>공개일<input name="published_at" type="date" /></label>
+            <label>표시 순서<input name="sort_order" type="number" min="0" value="0" /></label>
+          </div>
+          <label class="check-label"><input name="is_featured" type="checkbox" /> 최신 대표 영상으로 표시</label>
+          <button class="save-button" type="submit">영상 저장</button>
+        </form>
+      </section>
+    </section>
+  </main>
+
+  <div class="admin-toast" id="adminToast" role="status" aria-live="polite"></div>
+  <script src="/admin/admin.js" defer></script>
+</body>
+</html>

@@ -1,0 +1,17 @@
+# 이 파일은 예시입니다.
+# 현재 Cloudflare 대시보드에서 Pages 설정을 사용 중이라면,
+# 공식 권장 방식인 `npx wrangler pages download config kenneth-homepage`로
+# 실제 설정을 내려받은 후 아래 바인딩을 확인하세요.
+
+name = "kenneth-homepage"
+pages_build_output_dir = "."
+compatibility_date = "2026-07-31"
+
+[[d1_databases]]
+binding = "DB"
+database_name = "hweegeun-site-db"
+database_id = "여기에_D1_DATABASE_ID"
+
+[[r2_buckets]]
+binding = "MEDIA"
+bucket_name = "hweegeun-site-media"
