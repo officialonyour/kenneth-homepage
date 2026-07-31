@@ -1,36 +1,19 @@
 "use strict";
 
-// 링크만 바꾸면 카드 연결 주소를 손쉽게 수정할 수 있습니다.
-const PROFILE_LINKS = {
-  instagram: "https://www.instagram.com/kenneth_beats",
-  youtube: "https://youtube.com/channel/UCA05duT3IUBs3Wozk9htniQ",
-  spotify: "https://open.spotify.com/artist/6TdOEKyyP53FqBQ50VDvlK",
-  appleMusic: "https://music.apple.com/kr/artist/1661635079",
-  store: "",
-  soundcloud: "",
-  melon: ""
-};
-
-
-
 const $ = (selector, scope = document) => scope.querySelector(selector);
 const $$ = (selector, scope = document) => [...scope.querySelectorAll(selector)];
 
-const tabButtons = $$(".tab-button");
-const tabPanels = $$(".tab-panel");
-const contactModal = $("#contactModal");
-const modalClose = $("#modalClose");
-const contactTriggers = [$("#contactButton"), $("#profileButton"), $("#drawerContact")].filter(Boolean);
-const toast = $("#toast");
+const siteHeader = $("#siteHeader");
+const scrollProgress = $("#scrollProgress");
 const menuButton = $("#menuButton");
-const sideDrawer = $("#sideDrawer");
-const drawerClose = $("#drawerClose");
-const drawerBackdrop = $("#drawerBackdrop");
-const searchButton = $("#searchButton");
-const searchPanel = $("#searchPanel");
-const searchClose = $("#searchClose");
-const siteSearch = $("#siteSearch");
-const searchMessage = $("#searchMessage");
+const mobileMenu = $("#mobileMenu");
+const menuClose = $("#menuClose");
+const menuBackdrop = $("#menuBackdrop");
+const shareButton = $("#shareButton");
+const copyEmailButton = $("#copyEmailButton");
+const backToTop = $("#backToTop");
+const toast = $("#toast");
+const currentYear = $("#currentYear");
 let toastTimer = null;
 
 function showToast(message) {
@@ -38,232 +21,165 @@ function showToast(message) {
   window.clearTimeout(toastTimer);
   toast.textContent = message;
   toast.classList.add("is-visible");
-  toastTimer = window.setTimeout(() => toast.classList.remove("is-visible"), 2100);
+  toastTimer = window.setTimeout(() => {
+    toast.classList.remove("is-visible");
+  }, 2200);
 }
 
-function activateTab(tabName, shouldScroll = false) {
-  tabButtons.forEach((button) => {
-    const isActive = button.dataset.tab === tabName;
-    button.classList.toggle("is-active", isActive);
-    button.setAttribute("aria-selected", String(isActive));
-  });
-
-  tabPanels.forEach((panel) => {
-    const isActive = panel.dataset.panel === tabName;
-    panel.classList.toggle("is-active", isActive);
-    panel.hidden = !isActive;
-  });
-
-  if (shouldScroll) {
-    $(".tabs")?.scrollIntoView({ behavior: "smooth", block: "start" });
-  }
-}
-
-function openContactModal() {
-  closeDrawer();
-  contactModal.classList.add("is-open");
-  contactModal.setAttribute("aria-hidden", "false");
-  document.body.classList.add("modal-open");
-  modalClose.focus();
-}
-
-function closeContactModal() {
-  contactModal.classList.remove("is-open");
-  contactModal.setAttribute("aria-hidden", "true");
-  document.body.classList.remove("modal-open");
-}
-
-function openDrawer() {
-  closeSearch();
-  sideDrawer.classList.add("is-open");
-  sideDrawer.setAttribute("aria-hidden", "false");
-  drawerBackdrop.hidden = false;
+function openMenu() {
+  if (!mobileMenu || !menuButton || !menuBackdrop) return;
+  mobileMenu.classList.add("is-open");
+  mobileMenu.setAttribute("aria-hidden", "false");
   menuButton.setAttribute("aria-expanded", "true");
+  menuBackdrop.hidden = false;
+  document.body.classList.add("menu-open");
+  menuClose?.focus();
 }
 
-function closeDrawer() {
-  sideDrawer.classList.remove("is-open");
-  sideDrawer.setAttribute("aria-hidden", "true");
-  drawerBackdrop.hidden = true;
+function closeMenu() {
+  if (!mobileMenu || !menuButton || !menuBackdrop) return;
+  mobileMenu.classList.remove("is-open");
+  mobileMenu.setAttribute("aria-hidden", "true");
   menuButton.setAttribute("aria-expanded", "false");
+  menuBackdrop.hidden = true;
+  document.body.classList.remove("menu-open");
 }
 
-function openSearch() {
-  closeDrawer();
-  searchPanel.classList.add("is-open");
-  searchPanel.setAttribute("aria-hidden", "false");
-  searchButton.setAttribute("aria-expanded", "true");
-  window.setTimeout(() => siteSearch.focus(), 120);
-}
-
-function closeSearch() {
-  searchPanel.classList.remove("is-open");
-  searchPanel.setAttribute("aria-hidden", "true");
-  searchButton.setAttribute("aria-expanded", "false");
-  siteSearch.value = "";
-  resetSearchResults();
-}
-
-function resetSearchResults() {
-  $$(".searchable").forEach((item) => item.classList.remove("is-search-hidden"));
-  searchMessage.textContent = "카드 제목과 앨범명을 검색할 수 있습니다.";
-}
-
-function runSearch() {
-  const query = siteSearch.value.trim().toLocaleLowerCase("ko-KR");
-  if (!query) {
-    resetSearchResults();
-    return;
-  }
-
-  const items = $$(".searchable");
-  let count = 0;
-  items.forEach((item) => {
-    const haystack = `${item.dataset.search || ""} ${item.textContent || ""}`.toLocaleLowerCase("ko-KR");
-    const matched = haystack.includes(query);
-    item.classList.toggle("is-search-hidden", !matched);
-    if (matched) count += 1;
-  });
-
-  searchMessage.textContent = count ? `${count}개의 결과가 있습니다.` : "검색 결과가 없습니다.";
-}
-
-async function copyText(text, successMessage) {
+async function copyText(value, message) {
   try {
-    await navigator.clipboard.writeText(text);
-    showToast(successMessage);
+    await navigator.clipboard.writeText(value);
+    showToast(message);
   } catch {
-    const temp = document.createElement("textarea");
-    temp.value = text;
-    temp.style.position = "fixed";
-    temp.style.opacity = "0";
-    document.body.appendChild(temp);
-    temp.select();
+    const fallback = document.createElement("textarea");
+    fallback.value = value;
+    fallback.setAttribute("readonly", "");
+    fallback.style.position = "fixed";
+    fallback.style.opacity = "0";
+    document.body.appendChild(fallback);
+    fallback.select();
     document.execCommand("copy");
-    temp.remove();
-    showToast(successMessage);
+    fallback.remove();
+    showToast(message);
   }
 }
 
-async function sharePage() {
-  const shareData = {
+async function shareProfile() {
+  const data = {
     title: document.title,
-    text: "이휘근 (Kenneth)님의 음악과 링크를 확인해 보세요.",
+    text: "ì´íê·¼ì ê³µì ìì í¬í¸í´ë¦¬ì¤ë¥¼ íì¸í´ ë³´ì¸ì.",
     url: window.location.href
   };
 
   if (navigator.share) {
     try {
-      await navigator.share(shareData);
+      await navigator.share(data);
       return;
     } catch (error) {
       if (error?.name === "AbortError") return;
     }
   }
 
-  await copyText(window.location.href, "홈페이지 주소가 복사되었습니다.");
+  await copyText(window.location.href, "ííì´ì§ ì£¼ìê° ë³µì¬ëììµëë¤.");
 }
 
-function applyConfiguredLinks() {
-  const linkMap = [
-    ["instagram", 'a[href*="instagram.com/kenneth_beats"]'],
-    ["youtube", 'a[href*="youtube.com/channel"]'],
-    ["spotify", 'a[href*="open.spotify.com/artist"]'],
-    ["appleMusic", 'a[href*="music.apple.com"]']
-  ];
+function updateScrollState() {
+  const scrollTop = window.scrollY || document.documentElement.scrollTop;
+  const scrollable = document.documentElement.scrollHeight - window.innerHeight;
+  const progress = scrollable > 0 ? Math.min(100, (scrollTop / scrollable) * 100) : 0;
 
-  linkMap.forEach(([key, selector]) => {
-    const element = $(selector);
-    if (element && PROFILE_LINKS[key]) element.href = PROFILE_LINKS[key];
-  });
+  if (scrollProgress) scrollProgress.style.width = `${progress}%`;
+  siteHeader?.classList.toggle("is-scrolled", scrollTop > 20);
+}
 
-  const placeholders = [
-    ["store", "KENNETH Beats Store"],
-    ["soundcloud", "SoundCloud"],
-    ["melon", "Melon"]
-  ];
+function setupRevealAnimation() {
+  const targets = $$(".reveal");
+  if (!("IntersectionObserver" in window)) {
+    targets.forEach((target) => target.classList.add("is-visible"));
+    return;
+  }
 
-  placeholders.forEach(([key, label]) => {
-    const target = $(`.placeholder-link[data-placeholder-message^="${label}"]`);
-    if (!target) return;
-    const url = PROFILE_LINKS[key];
-    if (url) {
-      target.href = url;
-      target.target = "_blank";
-      target.rel = "noreferrer";
-      target.classList.remove("placeholder-link");
-    }
+  const observer = new IntersectionObserver(
+    (entries, currentObserver) => {
+      entries.forEach((entry) => {
+        if (!entry.isIntersecting) return;
+        entry.target.classList.add("is-visible");
+        currentObserver.unobserve(entry.target);
+      });
+    },
+    { threshold: 0.12, rootMargin: "0px 0px -6% 0px" }
+  );
+
+  targets.forEach((target, index) => {
+    target.style.transitionDelay = `${Math.min(index % 4, 3) * 70}ms`;
+    observer.observe(target);
   });
 }
 
-tabButtons.forEach((button) => {
-  button.addEventListener("click", () => activateTab(button.dataset.tab));
-});
+function setupArtworkTilt() {
+  const art = $(".hero-art");
+  const cards = $$("[data-tilt]");
+  if (!art || !cards.length || window.matchMedia("(pointer: coarse)").matches) return;
 
-$$("[data-tab-target]").forEach((button) => {
-  button.addEventListener("click", () => {
-    activateTab(button.dataset.tabTarget, true);
-    closeDrawer();
+  const baseTransforms = new Map([
+    [$(".cover-main"), "rotate(3.5deg)"],
+    [$(".cover-back-one"), "rotate(-10deg)"],
+    [$(".cover-back-two"), "rotate(12deg)"]
+  ]);
+
+  art.addEventListener("pointermove", (event) => {
+    const rect = art.getBoundingClientRect();
+    const x = (event.clientX - rect.left) / rect.width - 0.5;
+    const y = (event.clientY - rect.top) / rect.height - 0.5;
+
+    cards.forEach((card, index) => {
+      const depth = 1 - index * 0.18;
+      const base = baseTransforms.get(card) || "";
+      const rotateX = y * -8 * depth;
+      const rotateY = x * 10 * depth;
+      const moveX = x * 14 * depth;
+      const moveY = y * 10 * depth;
+      card.style.transform = `${base} translate3d(${moveX}px, ${moveY}px, 0) rotateX(${rotateX}deg) rotateY(${rotateY}deg)`;
+    });
   });
-});
 
-contactTriggers.forEach((button) => button.addEventListener("click", openContactModal));
-modalClose.addEventListener("click", closeContactModal);
-contactModal.addEventListener("click", (event) => {
-  if (event.target === contactModal) closeContactModal();
-});
-
-menuButton.addEventListener("click", () => {
-  if (sideDrawer.classList.contains("is-open")) closeDrawer();
-  else openDrawer();
-});
-drawerClose.addEventListener("click", closeDrawer);
-drawerBackdrop.addEventListener("click", closeDrawer);
-
-searchButton.addEventListener("click", () => {
-  if (searchPanel.classList.contains("is-open")) closeSearch();
-  else openSearch();
-});
-searchClose.addEventListener("click", closeSearch);
-siteSearch.addEventListener("input", runSearch);
-
-$$(".contact-row[data-copy]").forEach((row) => {
-  row.addEventListener("click", () => {
-    const value = row.dataset.copy;
-    const label = value.includes("@") ? "이메일 주소" : "Kakao ID";
-    copyText(value, `${label}가 복사되었습니다.`);
+  art.addEventListener("pointerleave", () => {
+    cards.forEach((card) => {
+      card.style.transform = baseTransforms.get(card) || "";
+    });
   });
+}
+
+menuButton?.addEventListener("click", () => {
+  if (mobileMenu?.classList.contains("is-open")) closeMenu();
+  else openMenu();
 });
 
-$$(".placeholder-link").forEach((link) => {
-  link.addEventListener("click", (event) => {
-    if (link.getAttribute("href") === "#") {
-      event.preventDefault();
-      showToast(link.dataset.placeholderMessage || "링크를 입력해 주세요.");
-    }
-  });
+menuClose?.addEventListener("click", closeMenu);
+menuBackdrop?.addEventListener("click", closeMenu);
+$$(".mobile-menu a").forEach((link) => link.addEventListener("click", closeMenu));
+
+shareButton?.addEventListener("click", shareProfile);
+
+copyEmailButton?.addEventListener("click", () => {
+  const email = copyEmailButton.dataset.copy;
+  if (email) copyText(email, "ì´ë©ì¼ ì£¼ìê° ë³µì¬ëììµëë¤.");
 });
 
-$$(".like-trigger").forEach((button) => {
-  button.addEventListener("click", () => {
-    const nextState = !button.classList.contains("is-liked");
-    $$(".like-trigger").forEach((item) => item.classList.toggle("is-liked", nextState));
-    showToast(nextState ? "좋아요를 눌렀습니다." : "좋아요를 취소했습니다.");
-  });
-});
-
-$$(".share-trigger").forEach((button) => button.addEventListener("click", sharePage));
-
-$("#notificationButton").addEventListener("click", () => {
-  showToast("새 음악 알림 기능을 준비 중입니다.");
+backToTop?.addEventListener("click", () => {
+  window.scrollTo({ top: 0, behavior: "smooth" });
 });
 
 document.addEventListener("keydown", (event) => {
-  if (event.key !== "Escape") return;
-  if (contactModal.classList.contains("is-open")) closeContactModal();
-  if (sideDrawer.classList.contains("is-open")) closeDrawer();
-  if (searchPanel.classList.contains("is-open")) closeSearch();
+  if (event.key === "Escape" && mobileMenu?.classList.contains("is-open")) {
+    closeMenu();
+  }
 });
 
-applyConfiguredLinks();
-activateTab("home");
+window.addEventListener("scroll", updateScrollState, { passive: true });
+window.addEventListener("resize", updateScrollState);
+
+if (currentYear) currentYear.textContent = String(new Date().getFullYear());
+
+setupRevealAnimation();
+setupArtworkTilt();
+updateScrollState();
