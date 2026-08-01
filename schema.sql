@@ -7,8 +7,9 @@ CREATE TABLE IF NOT EXISTS site_settings (
   hero_eyebrow TEXT NOT NULL DEFAULT 'HIPHOP / EDM PRODUCER',
   hero_title TEXT NOT NULL DEFAULT 'SOUND
 THAT MOVES.',
-  hero_description TEXT NOT NULL DEFAULT '묵직한 리듬과 선명한 에너지를 설계합니다.',
-  hero_image_url TEXT NOT NULL DEFAULT '',
+hero_description TEXT NOT NULL DEFAULT '묵직한 리듬과 선명한 에너지를 설계합니다.',
+header_banner_url TEXT NOT NULL DEFAULT '',
+hero_image_url TEXT NOT NULL DEFAULT '',
   contact_email TEXT NOT NULL DEFAULT 'kenneth.whee@gmail.com',
   accent_color TEXT NOT NULL DEFAULT '#ef7042',
   spotify_url TEXT NOT NULL DEFAULT 'https://open.spotify.com/artist/6TdOEKyyP53FqBQ50VDvlK',

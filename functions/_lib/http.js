@@ -24,19 +24,31 @@ export function cleanString(value, maxLength = 2000) {
 }
 
 export function cleanUrl(value) {
-  const stringValue = cleanString(value, 2000);
-  if (!stringValue) return "";
+  const stringValue = cleanString(
+    value,
+    2000
+  );
+
+  if (!stringValue) {
+    return "";
+  }
+
+  if (
+    stringValue.startsWith("/media/")
+  ) {
+    return stringValue;
+  }
 
   try {
-    const url = new URL(stringValue, "https://kenneth.local");
+    const url =
+      new URL(stringValue);
 
-    if (url.origin === "https://kenneth.local") {
-      return url.pathname.startsWith("/media/")
-        ? `${url.pathname}${url.search}`
-        : "";
-    }
-
-    return ["http:", "https:"].includes(url.protocol) ? url.href : "";
+    return [
+      "http:",
+      "https:"
+    ].includes(url.protocol)
+      ? url.href
+      : "";
   } catch {
     return "";
   }

@@ -19,22 +19,49 @@
 </head>
 <body>
   <div class="page-shell">
-    <header class="site-header">
-      <a class="brand" href="#top" aria-label="맨 위로 이동">
-        <strong id="headerName">KENNETH</strong>
-        <span>HIPHOP / EDM PRODUCER</span>
-      </a>
 
-      <button
-        class="menu-button"
-        id="menuButton"
-        type="button"
-        aria-label="메뉴 열기"
-        aria-expanded="false"
+<header class="site-header">
+  <a
+    class="brand"
+    href="#top"
+    aria-label="맨 위로 이동"
+  >
+    <span
+      class="header-banner-slot"
+    >
+      <img
+        class="header-banner-image"
+        id="headerBannerImage"
+        alt="KENNETH 상단 배너"
+        hidden
+      />
+
+      <span
+        class="header-banner-fallback"
+        id="headerBannerFallback"
       >
-        <i></i><i></i>
-      </button>
-    </header>
+        <strong id="headerName">
+          KENNETH
+        </strong>
+
+        <small id="headerRoleText">
+          HIPHOP / EDM PRODUCER
+        </small>
+      </span>
+    </span>
+  </a>
+
+  <button
+    class="menu-button"
+    id="menuButton"
+    type="button"
+    aria-label="메뉴 열기"
+    aria-expanded="false"
+  >
+    <i></i>
+    <i></i>
+  </button>
+</header>
 
     <aside class="drawer" id="drawer" aria-hidden="true">
       <div class="drawer-head">

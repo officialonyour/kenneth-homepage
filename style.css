@@ -108,11 +108,34 @@ button {
 }
 
 .brand {
+  width: 142px;
+  height: 36px;
+
+  display: block;
+}
+
+.header-banner-slot {
+  width: 100%;
+  height: 100%;
+
+  display: flex;
+  align-items: center;
+}
+
+.header-banner-image {
+  width: 100%;
+  height: 100%;
+
+  object-fit: contain;
+  object-position: left center;
+}
+
+.header-banner-fallback {
   display: grid;
   gap: 1px;
 }
 
-.brand strong {
+.header-banner-fallback strong {
   font-size: 15px;
   font-weight: 800;
   line-height: 1;
@@ -120,7 +143,7 @@ button {
   letter-spacing: -0.04em;
 }
 
-.brand span {
+.header-banner-fallback small {
   color: #77736d;
 
   font-size: 6.5px;
@@ -490,17 +513,16 @@ button {
 
 .hero-image-slot {
   position: absolute;
-  top: 0;
-  right: -45px;
+  inset: 0;
 
   z-index: 1;
 
-  width: 194px;
-  height: 293px;
+  width: 100%;
+  height: 100%;
 
   overflow: hidden;
 
-  opacity: 0.74;
+  opacity: 1;
 }
 
 .hero-image-slot::before {
@@ -516,13 +538,15 @@ button {
   background:
     linear-gradient(
       to right,
-      #080808 0%,
-      rgba(8, 8, 8, 0.7) 18%,
-      transparent 54%
+      rgba(8, 8, 8, 0.98) 0%,
+      rgba(8, 8, 8, 0.9) 29%,
+      rgba(8, 8, 8, 0.5) 58%,
+      rgba(8, 8, 8, 0.15) 100%
     ),
     linear-gradient(
       to bottom,
-      transparent 57%,
+      rgba(8, 8, 8, 0.08) 0%,
+      rgba(8, 8, 8, 0.08) 55%,
       #080808 100%
     );
 }
@@ -532,27 +556,34 @@ button {
   height: 100%;
 
   object-fit: cover;
-  object-position: center;
+  object-position:
+    center
+    28%;
 
   filter:
-    saturate(0.82)
-    contrast(1.06);
+    saturate(0.85)
+    contrast(1.07)
+    brightness(0.8);
 }
 
-/* 이미지 업로드 전 자리 */
-
-.hero-image-slot .image-placeholder {
+.hero-image-slot
+.image-placeholder {
   border: 0;
 
   background:
     linear-gradient(
       145deg,
-      #111111 0%,
-      #0a0a0a 100%
+      #101010 0%,
+      #080808 100%
     );
 
   color:
-    rgba(255, 255, 255, 0.16);
+    rgba(
+      255,
+      255,
+      255,
+      0.1
+    );
 }
 
 .hero-image-slot

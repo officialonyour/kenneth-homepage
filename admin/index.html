@@ -91,10 +91,96 @@
             <textarea name="hero_description" rows="3" maxlength="240"></textarea>
           </label>
 
-          <label>
-            <span>포인트 색상</span>
-            <input name="accent_color" type="color" />
-          </label>
+<label>
+  <span>포인트 색상</span>
+
+  <input
+    name="accent_color"
+    type="color"
+  />
+</label>
+
+<div
+  class="upload-box"
+  data-upload-box
+  data-folder="header"
+  data-url-input="header_banner_url"
+  data-preview="headerBannerPreview"
+>
+  <div>
+    <strong>
+      상단 로고·배너 이미지
+    </strong>
+
+    <small>
+      가로형 PNG 또는 JPG 권장 · 최대 8MB
+    </small>
+  </div>
+
+  <input
+    id="headerBannerFile"
+    type="file"
+    accept="image/jpeg,image/png,image/webp,image/gif"
+  />
+
+  <label
+    class="upload-button"
+    for="headerBannerFile"
+  >
+    상단 배너 업로드
+  </label>
+
+  <input
+    name="header_banner_url"
+    type="hidden"
+  />
+
+  <div
+    class="image-preview"
+    id="headerBannerPreview"
+  ></div>
+</div>
+
+<div
+  class="upload-box"
+  data-upload-box
+  data-folder="hero"
+  data-url-input="hero_image_url"
+  data-preview="heroPreview"
+>
+  <div>
+    <strong>
+      메인 화면 배경 이미지
+    </strong>
+
+    <small>
+      세로 사진 권장 · JPG, PNG, WEBP · 최대 8MB
+    </small>
+  </div>
+
+  <input
+    id="heroFile"
+    type="file"
+    accept="image/jpeg,image/png,image/webp,image/gif"
+  />
+
+  <label
+    class="upload-button"
+    for="heroFile"
+  >
+    메인 사진 업로드
+  </label>
+
+  <input
+    name="hero_image_url"
+    type="hidden"
+  />
+
+  <div
+    class="image-preview"
+    id="heroPreview"
+  ></div>
+</div>
 
           <div
             class="upload-box"

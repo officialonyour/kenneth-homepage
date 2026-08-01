@@ -1,30 +1,77 @@
 "use strict";
 
 const DEFAULT_DATA = {
-  settings: {
-    display_name: "KENNETH",
-    role: "HIPHOP / EDM PRODUCER",
-    hero_eyebrow: "HIPHOP / EDM PRODUCER",
-    hero_title: "SOUND\nTHAT MOVES.",
-    hero_description: "묵직한 리듬과 선명한 에너지를 설계합니다.",
-    hero_image_url: "",
-    contact_email: "kenneth.whee@gmail.com",
-    accent_color: "#ef7042",
-    spotify_url: "https://open.spotify.com/artist/6TdOEKyyP53FqBQ50VDvlK",
-    apple_music_url: "https://music.apple.com/kr/artist/1661635079",
-    youtube_url: "https://youtube.com/channel/UCA05duT3IUBs3Wozk9htniQ",
-    instagram_url: "https://www.instagram.com/kenneth_beats",
-    melon_url: "",
-    soundcloud_url: "",
-    beatstars_url: "",
-    onyour_url: "https://onyour-homepage.pages.dev/",
-    onyour_title: "ONYOUR",
-    onyour_description: "재즈 힙합 프로젝트의 음악과 라이브를 확인하세요.",
-    onyour_image_url: "",
-    video_title: "",
-    video_url: "",
-    video_thumbnail_url: ""
-  },
+settings: {
+  display_name:
+    "KENNETH",
+
+  role:
+    "HIPHOP / EDM PRODUCER",
+
+  hero_eyebrow:
+    "HIPHOP / EDM PRODUCER",
+
+  hero_title:
+    "SOUND\nTHAT MOVES.",
+
+  hero_description:
+    "묵직한 리듬과 선명한 에너지를 설계합니다.",
+
+  header_banner_url:
+    "",
+
+  hero_image_url:
+    "",
+
+  contact_email:
+    "kenneth.whee@gmail.com",
+
+  accent_color:
+    "#ef7042",
+
+  spotify_url:
+    "https://open.spotify.com/artist/6TdOEKyyP53FqBQ50VDvlK",
+
+  apple_music_url:
+    "https://music.apple.com/kr/artist/1661635079",
+
+  youtube_url:
+    "https://youtube.com/channel/UCA05duT3IUBs3Wozk9htniQ",
+
+  instagram_url:
+    "https://www.instagram.com/kenneth_beats",
+
+  melon_url:
+    "",
+
+  soundcloud_url:
+    "",
+
+  beatstars_url:
+    "",
+
+  onyour_url:
+    "https://onyour-homepage.pages.dev/",
+
+  onyour_title:
+    "ONYOUR",
+
+  onyour_description:
+    "재즈 힙합 프로젝트의 음악과 라이브를 확인하세요.",
+
+  onyour_image_url:
+    "",
+
+  video_title:
+    "",
+
+  video_url:
+    "",
+
+  video_thumbnail_url:
+    ""
+},
+
   releases: [
     {
       id: 1,
@@ -218,26 +265,97 @@ function applyTheme(settings) {
   document.documentElement.style.setProperty("--accent", accent);
 }
 
-function renderBrand(settings) {
-  const name = settings.display_name || "KENNETH";
-  const title = String(settings.hero_title || "").trim();
+function renderBrand(
+  settings
+) {
+  const name =
+    settings.display_name ||
+    "KENNETH";
 
-  $("#headerName").textContent = name;
-  $("#footerName").textContent = name;
-  $("#heroRole").textContent = settings.role || "";
-  $("#heroEyebrow").textContent = settings.hero_eyebrow || settings.role || "";
-  $("#heroDescription").textContent = settings.hero_description || "";
+  const role =
+    settings.role ||
+    "";
 
-  $("#heroTitle").innerHTML = escapeHtml(title).replaceAll("\n", "<br />");
+  const title =
+    String(
+      settings.hero_title ||
+      ""
+    ).trim();
 
-  const heroSlot = $("#heroImageSlot");
-  heroSlot.innerHTML = imageMarkup(
-    settings.hero_image_url,
-    `${name} 메인 이미지`,
-    "HERO IMAGE"
-  );
+  $("#headerName").textContent =
+    name;
 
-  document.title = `${name} | ${settings.role || "Producer"}`;
+  $("#headerRoleText").textContent =
+    role;
+
+  $("#footerName").textContent =
+    name;
+
+  $("#heroRole").textContent =
+    role;
+
+  $("#heroEyebrow").textContent =
+    settings.hero_eyebrow ||
+    role;
+
+  $("#heroDescription").textContent =
+    settings.hero_description ||
+    "";
+
+  $("#heroTitle").innerHTML =
+    escapeHtml(title)
+      .replaceAll(
+        "\n",
+        "<br />"
+      );
+
+  const bannerImage =
+    $("#headerBannerImage");
+
+  const bannerFallback =
+    $("#headerBannerFallback");
+
+  const bannerUrl =
+    safeUrl(
+      settings.header_banner_url
+    );
+
+  if (bannerUrl) {
+    bannerImage.src =
+      bannerUrl;
+
+    bannerImage.hidden =
+      false;
+
+    bannerFallback.hidden =
+      true;
+  } else {
+    bannerImage.removeAttribute(
+      "src"
+    );
+
+    bannerImage.hidden =
+      true;
+
+    bannerFallback.hidden =
+      false;
+  }
+
+  const heroSlot =
+    $("#heroImageSlot");
+
+  heroSlot.innerHTML =
+    imageMarkup(
+      settings.hero_image_url,
+      `${name} 메인 이미지`,
+      "MAIN IMAGE"
+    );
+
+  document.title =
+    `${name} | ${
+      role ||
+      "Producer"
+    }`;
 }
 
 function getReleaseLinks(release) {

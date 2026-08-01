@@ -77,10 +77,28 @@ function renderPreview(previewId, url) {
     : `<span>업로드된 이미지 없음</span>`;
 }
 
-function renderAllPreviews(settings) {
-  renderPreview("heroPreview", settings.hero_image_url);
-  renderPreview("videoPreview", settings.video_thumbnail_url);
-  renderPreview("onyourPreview", settings.onyour_image_url);
+function renderAllPreviews(
+  settings
+) {
+  renderPreview(
+    "headerBannerPreview",
+    settings.header_banner_url
+  );
+
+  renderPreview(
+    "heroPreview",
+    settings.hero_image_url
+  );
+
+  renderPreview(
+    "videoPreview",
+    settings.video_thumbnail_url
+  );
+
+  renderPreview(
+    "onyourPreview",
+    settings.onyour_image_url
+  );
 }
 
 function activateTab(tabName) {
@@ -96,13 +114,16 @@ function activateTab(tabName) {
   });
 }
 
-function fillSettingsForms(settings) {
+function fillSettingsForms(
+  settings
+) {
   const profileFields = [
     "display_name",
     "role",
     "hero_eyebrow",
     "hero_title",
     "hero_description",
+    "header_banner_url",
     "hero_image_url",
     "contact_email",
     "accent_color"
@@ -127,15 +148,31 @@ function fillSettingsForms(settings) {
 
   setFormValues(
     $("#profileForm"),
-    Object.fromEntries(profileFields.map((key) => [key, settings[key]]))
+    Object.fromEntries(
+      profileFields.map(
+        (key) => [
+          key,
+          settings[key]
+        ]
+      )
+    )
   );
 
   setFormValues(
     $("#mediaForm"),
-    Object.fromEntries(mediaFields.map((key) => [key, settings[key]]))
+    Object.fromEntries(
+      mediaFields.map(
+        (key) => [
+          key,
+          settings[key]
+        ]
+      )
+    )
   );
 
-  renderAllPreviews(settings);
+  renderAllPreviews(
+    settings
+  );
 }
 
 function releaseCoverMarkup(release) {
