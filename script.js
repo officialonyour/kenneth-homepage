@@ -576,53 +576,125 @@ function bindOptionalLink(element, url, emptyMessage) {
 
 function renderLinks(settings) {
   const links = [
-    ["Spotify", settings.spotify_url],
-    ["Apple Music", settings.apple_music_url],
-    ["YouTube", settings.youtube_url],
-    ["Instagram", settings.instagram_url],
-    ["SoundCloud", settings.soundcloud_url],
-    ["BeatStars", settings.beatstars_url],
-    ["Melon", settings.melon_url]
+    [
+      "Spotify",
+      settings.spotify_url
+    ],
+    [
+      "Apple Music",
+      settings.apple_music_url
+    ],
+    [
+      "YouTube",
+      settings.youtube_url
+    ],
+    [
+      "Instagram",
+      settings.instagram_url
+    ],
+    [
+      "SoundCloud",
+      settings.soundcloud_url
+    ],
+    [
+      "BeatStars",
+      settings.beatstars_url
+    ],
+    [
+      "Melon",
+      settings.melon_url
+    ],
+    [
+      "ONYOUR",
+      settings.onyour_url
+    ]
   ];
 
-  const linkGrid = $("#linkGrid");
 
-  linkGrid.innerHTML = links
-    .map(
-      ([label, url]) => `
-        <a
-          class="link-item"
-          href="#"
-          data-url="${escapeHtml(url || "")}"
-          data-label="${escapeHtml(label)}"
-        >
-          <span>${escapeHtml(label)}</span>
-          <span>↗</span>
-        </a>
-      `
-    )
-    .join("");
+  const linkGrid =
+    $("#linkGrid");
 
-  const contact = document.createElement("a");
-  contact.className = "link-item is-wide";
-  contact.innerHTML = `<span>Contact / Collaboration</span><span>↗</span>`;
+
+  linkGrid.innerHTML =
+    links
+      .map(
+        ([
+          label,
+          url
+        ]) => `
+          <a
+            class="link-item"
+            href="#"
+            data-url="${escapeHtml(
+              url || ""
+            )}"
+            data-label="${escapeHtml(
+              label
+            )}"
+          >
+            <span>
+              ${escapeHtml(label)}
+            </span>
+
+            <span>
+              ↗
+            </span>
+          </a>
+        `
+      )
+      .join("");
+
+
+  const contact =
+    document.createElement(
+      "a"
+    );
+
+
+  contact.className =
+    "link-item is-wide";
+
+
+  contact.innerHTML = `
+    <span>
+      Contact / Collaboration
+    </span>
+
+    <span>
+      ↗
+    </span>
+  `;
+
+
   linkGrid.append(contact);
 
-  $$(".link-item[data-label]", linkGrid).forEach((element) => {
-    bindOptionalLink(
-      element,
-      element.dataset.url,
-      `${element.dataset.label} 링크를 등록해 주세요.`
-    );
-  });
+
+  $$(
+    ".link-item[data-label]",
+    linkGrid
+  ).forEach(
+    (element) => {
+      bindOptionalLink(
+        element,
+        element.dataset.url,
+        `${
+          element.dataset.label
+        } 링크를 등록해 주세요.`
+      );
+    }
+  );
+
 
   bindOptionalLink(
     contact,
     settings.contact_email
-      ? `mailto:${settings.contact_email}`
+      ? `mailto:${
+          settings.contact_email
+        }`
       : "",
     "관리자에서 이메일 주소를 등록해 주세요."
   );
+
 
   bindOptionalLink(
     $("#beatstarsButton"),
