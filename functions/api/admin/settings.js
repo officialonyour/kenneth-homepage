@@ -1,22 +1,143 @@
-import { json, error, readJson } from "../../_shared/http.js";
-import { sanitizeSettings } from "../../_shared/data.js";
+import { json, cleanString, cleanUrl } from "../../_lib/http.js";
+import { requireAdmin } from "../../_lib/admin.js";
 
-export async function onRequestPost({ request, env }) {
-  if (!env.DB) return error("D1 바인딩 DB가 설정되지 않았습니다.", 503);
-  try {
-    const settings = sanitizeSettings(await readJson(request));
-    const entries = Object.entries(settings);
-    if (!entries.length) return error("저장할 설정이 없습니다.", 400);
+const SETTINGS_FIELDS = [
+  "display_name",
+  "role",
+  "hero_eyebrow",
+  "hero_title",
+  "hero_description",
+  "hero_image_url",
+  "contact_email",
+  "accent_color",
+  "spotify_url",
+  "apple_music_url",
+  "youtube_url",
+  "instagram_url",
+  "melon_url",
+  "soundcloud_url",
+  "beatstars_url",
+  "onyour_url",
+  "onyour_title",
+  "onyour_description",
+  "onyour_image_url",
+  "video_title",
+  "video_url",
+  "video_thumbnail_url"
+];
 
-    await env.DB.batch(entries.map(([key, value]) => env.DB.prepare(`
-      INSERT INTO site_settings (key, value, updated_at)
-      VALUES (?, ?, CURRENT_TIMESTAMP)
-      ON CONFLICT(key) DO UPDATE SET value = excluded.value, updated_at = CURRENT_TIMESTAMP
-    `).bind(key, value)));
+function normalizeSettings(input) {
+  const urlFields = new Set([
+    "hero_image_url",
+    "spotify_url",
+    "apple_music_url",
+    "youtube_url",
+    "instagram_url",
+    "melon_url",
+    "soundcloud_url",
+    "beatstars_url",
+    "onyour_url",
+    "onyour_image_url",
+    "video_url",
+    "video_thumbnail_url"
+  ]);
 
-    const result = await env.DB.prepare("SELECT key, value FROM site_settings ORDER BY key").all();
-    return json({ ok: true, settings: Object.fromEntries((result.results || []).map((row) => [row.key, row.value])) });
-  } catch (cause) {
-    return error(cause?.message || "설정 저장에 실패했습니다.", 400);
+  const output = {};
+
+  for (const field of SETTINGS_FIELDS) {
+    if (urlFields.has(field)) {
+      output[field] = cleanUrl(input[field]);
+    } else if (field === "accent_color") {
+      output[field] = /^#[0-9a-f]{6}$/i.test(input[field] || "")
+        ? input[field]
+        : "#ef7042";
+    } else {
+      output[field] = cleanString(input[field], 2000);
+    }
   }
+
+  return output;
+}
+
+export async function onRequestGet(context) {
+  const unauthorized = await requireAdmin(context);
+  if (unauthorized) return unauthorized;
+
+  const settings = await context.env.DB.prepare(
+    "SELECT * FROM site_settings WHERE id = 1"
+  ).first();
+
+  return json({ settings: settings || {} });
+}
+
+export async function onRequestPut(context) {
+  const unauthorized = await requireAdmin(context);
+  if (unauthorized) return unauthorized;
+
+  const input = await context.request.json().catch(() => ({}));
+  const values = normalizeSettings(input);
+
+  await context.env.DB.prepare(
+    `INSERT INTO site_settings (
+      id,
+      display_name,
+      role,
+      hero_eyebrow,
+      hero_title,
+      hero_description,
+      hero_image_url,
+      contact_email,
+      accent_color,
+      spotify_url,
+      apple_music_url,
+      youtube_url,
+      instagram_url,
+      melon_url,
+      soundcloud_url,
+      beatstars_url,
+      onyour_url,
+      onyour_title,
+      onyour_description,
+      onyour_image_url,
+      video_title,
+      video_url,
+      video_thumbnail_url,
+      updated_at
+    ) VALUES (
+      1, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?,
+      CURRENT_TIMESTAMP
+    )
+    ON CONFLICT(id) DO UPDATE SET
+      display_name = excluded.display_name,
+      role = excluded.role,
+      hero_eyebrow = excluded.hero_eyebrow,
+      hero_title = excluded.hero_title,
+      hero_description = excluded.hero_description,
+      hero_image_url = excluded.hero_image_url,
+      contact_email = excluded.contact_email,
+      accent_color = excluded.accent_color,
+      spotify_url = excluded.spotify_url,
+      apple_music_url = excluded.apple_music_url,
+      youtube_url = excluded.youtube_url,
+      instagram_url = excluded.instagram_url,
+      melon_url = excluded.melon_url,
+      soundcloud_url = excluded.soundcloud_url,
+      beatstars_url = excluded.beatstars_url,
+      onyour_url = excluded.onyour_url,
+      onyour_title = excluded.onyour_title,
+      onyour_description = excluded.onyour_description,
+      onyour_image_url = excluded.onyour_image_url,
+      video_title = excluded.video_title,
+      video_url = excluded.video_url,
+      video_thumbnail_url = excluded.video_thumbnail_url,
+      updated_at = CURRENT_TIMESTAMP`
+  )
+    .bind(...SETTINGS_FIELDS.map((field) => values[field]))
+    .run();
+
+  const settings = await context.env.DB.prepare(
+    "SELECT * FROM site_settings WHERE id = 1"
+  ).first();
+
+  return json({ settings });
 }

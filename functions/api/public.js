@@ -1,12 +1,32 @@
-import { json, error } from "../_shared/http.js";
-import { fetchAllData } from "../_shared/data.js";
+import { json } from "../_lib/http.js";
 
 export async function onRequestGet({ env }) {
-  if (!env.DB) return error("D1 바인딩 DB가 설정되지 않았습니다.", 503);
   try {
-    const data = await fetchAllData(env.DB, false);
-    return json(data, 200, { "Cache-Control": "no-store" });
-  } catch (cause) {
-    return error("홈페이지 데이터를 불러오지 못했습니다.", 500, String(cause?.message || cause));
+    const [settings, releaseResult] = await Promise.all([
+      env.DB.prepare("SELECT * FROM site_settings WHERE id = 1").first(),
+      env.DB.prepare(
+        `SELECT *
+         FROM releases
+         WHERE is_published = 1
+         ORDER BY is_featured DESC, sort_order ASC, release_date DESC, id DESC`
+      ).all()
+    ]);
+
+    return json(
+      {
+        settings: settings || {},
+        releases: releaseResult.results || []
+      },
+      200,
+      { "Cache-Control": "public, max-age=30, stale-while-revalidate=60" }
+    );
+  } catch (error) {
+    return json(
+      {
+        error: "데이터베이스를 확인해 주세요.",
+        detail: error.message
+      },
+      500
+    );
   }
 }

@@ -3,27 +3,26 @@
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
-  <meta name="theme-color" content="#090909" />
+  <meta name="theme-color" content="#080808" />
   <title>KENNETH | Hiphop / EDM Producer</title>
   <meta
     name="description"
-    content="힙합과 EDM의 경계를 넘나드는 프로듀서 KENNETH의 공식 모바일 홈페이지"
+    content="힙합과 EDM의 경계를 넘나드는 프로듀서 KENNETH의 공식 홈페이지"
   />
-  <link rel="icon" type="image/png" href="assets/kenneth-logo-square.png" />
   <link rel="preconnect" href="https://fonts.googleapis.com" />
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
   <link
-    href="https://fonts.googleapis.com/css2?family=Noto+Sans+KR:wght@400;500;600;700;800;900&display=swap"
+    href="https://fonts.googleapis.com/css2?family=Manrope:wght@500;600;700;800&family=Noto+Sans+KR:wght@400;500;600;700;800&display=swap"
     rel="stylesheet"
   />
-  <link rel="stylesheet" href="style.css" />
+  <link rel="stylesheet" href="/style.css" />
 </head>
-
 <body>
-  <div class="app-shell">
+  <div class="page-shell">
     <header class="site-header">
-      <a class="site-brand" href="#top" aria-label="맨 위로 이동">
-        <img src="assets/kenneth-logo-horizontal.jpg" alt="KENNETH" />
+      <a class="brand" href="#top" aria-label="맨 위로 이동">
+        <strong id="headerName">KENNETH</strong>
+        <span>HIPHOP / EDM PRODUCER</span>
       </a>
 
       <button
@@ -33,193 +32,145 @@
         aria-label="메뉴 열기"
         aria-expanded="false"
       >
-        <span></span>
-        <span></span>
+        <i></i><i></i>
       </button>
     </header>
 
-    <aside class="mobile-drawer" id="mobileDrawer" aria-hidden="true">
+    <aside class="drawer" id="drawer" aria-hidden="true">
       <div class="drawer-head">
-        <span>KENNETH</span>
-        <button class="drawer-close" id="drawerClose" type="button" aria-label="메뉴 닫기">×</button>
+        <strong>MENU</strong>
+        <button id="drawerClose" type="button" aria-label="메뉴 닫기">×</button>
       </div>
 
-      <nav class="drawer-nav" aria-label="페이지 메뉴">
-        <a href="#latestRelease"><span>01</span> Latest Release</a>
-        <a href="#selectedWorks"><span>02</span> Selected Works</a>
-        <a href="#beatsSection"><span>03</span> Beats</a>
-        <a href="#latestVideo"><span>04</span> Latest Video</a>
-        <a href="#onyourSection"><span>05</span> ONYOUR</a>
-        <a href="#listenLinks"><span>06</span> Links</a>
+      <nav class="drawer-nav">
+        <a href="#latestRelease"><b>01</b><span>Latest Release</span></a>
+        <a href="#selectedWorks"><b>02</b><span>Selected Works</span></a>
+        <a href="#beatStore"><b>03</b><span>Beat Store</span></a>
+        <a href="#latestVideo"><b>04</b><span>Latest Video</span></a>
+        <a href="#onyour"><b>05</b><span>ONYOUR</span></a>
+        <a href="#connect"><b>06</b><span>Connect</span></a>
       </nav>
     </aside>
-
     <div class="drawer-backdrop" id="drawerBackdrop" hidden></div>
 
     <main id="top">
-      <section class="hero-section">
+      <section class="hero">
         <div class="hero-copy">
-          <p class="eyebrow">HIPHOP / EDM PRODUCER</p>
-          <h1>
-            SOUND<br />
-            THAT MOVES.
-          </h1>
-          <p class="hero-description">
-            묵직한 리듬과 선명한 에너지를 설계합니다.<br />
-            프로듀서 KENNETH.
+          <p class="eyebrow" id="heroEyebrow">HIPHOP / EDM PRODUCER</p>
+          <h1 id="heroTitle">SOUND<br />THAT MOVES.</h1>
+          <p class="hero-description" id="heroDescription">
+            묵직한 리듬과 선명한 에너지를 설계합니다.
           </p>
 
           <div class="hero-actions">
-            <a class="primary-button" id="heroListenButton" href="#latestRelease">
-              최신 음악 듣기
-              <span aria-hidden="true">↗</span>
+            <a class="button button-light" id="heroListenLink" href="#latestRelease">
+              최신 음악 듣기 <span>↗</span>
             </a>
-            <a class="text-button" href="#selectedWorks">작업 보기</a>
+            <a class="button-link" href="#selectedWorks">작업 보기</a>
           </div>
         </div>
 
-        <div class="hero-art" aria-hidden="true">
-          <img src="assets/alive.jpg" alt="" />
+        <div class="hero-image-slot" id="heroImageSlot">
+          <div class="image-placeholder">
+            <span>HERO IMAGE</span>
+            <small>관리자에서 업로드</small>
+          </div>
         </div>
 
-        <div class="hero-index">01 / KENNETH</div>
+        <div class="hero-foot">
+          <span>SEOUL · KR</span>
+          <span id="heroRole">HIPHOP / EDM PRODUCER</span>
+        </div>
       </section>
 
-      <section class="content-section" id="latestRelease">
-        <div class="section-heading">
+      <section class="section" id="latestRelease">
+        <div class="section-head">
           <div>
-            <span class="section-number">01</span>
+            <span class="section-index">01</span>
             <h2>LATEST RELEASE</h2>
           </div>
-          <span class="section-status">NEW</span>
+          <span class="accent-label">NEW</span>
         </div>
 
-        <div class="latest-release-wrap" id="latestReleaseWrap"></div>
+        <div id="latestReleaseContent" class="latest-release"></div>
       </section>
 
-      <section class="content-section" id="selectedWorks">
-        <div class="section-heading">
+      <section class="section" id="selectedWorks">
+        <div class="section-head">
           <div>
-            <span class="section-number">02</span>
+            <span class="section-index">02</span>
             <h2>SELECTED WORKS</h2>
           </div>
-          <button class="section-action" id="viewAllWorksButton" type="button">VIEW ALL</button>
+          <button class="head-action" id="toggleWorksButton" type="button">VIEW ALL</button>
         </div>
 
-        <div class="works-grid" id="worksGrid"></div>
+        <div class="works-rail" id="worksRail"></div>
       </section>
 
-      <section class="beats-panel" id="beatsSection">
-        <div class="beats-topline">
+      <section class="beat-store" id="beatStore">
+        <div class="beat-meta">
           <span>03 / BEATS</span>
-          <span>LICENSE &amp; CREATE</span>
+          <span>LICENSE · CREATE</span>
         </div>
-
-        <h2>BEATS BUILT<br />FOR YOUR NEXT MOVE.</h2>
-
-        <p>
-          아티스트의 색을 살릴 수 있는 힙합·EDM 비트를
-          BeatStars에서 확인하세요.
-        </p>
-
-        <a class="beats-button" id="beatstarsButton" href="#">
-          BeatStars에서 보기
-          <span aria-hidden="true">↗</span>
+        <h2>BEATS FOR<br />YOUR NEXT MOVE.</h2>
+        <p>아티스트의 색을 살리는 힙합·EDM 비트를 확인하세요.</p>
+        <a class="button button-light is-full" id="beatstarsButton" href="#">
+          BeatStars에서 보기 <span>↗</span>
         </a>
       </section>
 
-      <section class="media-grid">
-        <article class="media-card" id="latestVideo">
-          <div class="media-card-head">
+      <section class="split-section">
+        <article class="compact-card" id="latestVideo">
+          <div class="card-head">
             <span>04</span>
             <strong>LATEST VIDEO</strong>
           </div>
 
-          <div class="video-thumb-wrap" id="videoThumbWrap"></div>
-
-          <div class="media-card-body">
-            <p id="videoTitleText"></p>
-            <a
-              class="outline-button"
-              id="videoLinkButton"
-              href="#"
-              target="_blank"
-              rel="noreferrer"
-            >
-              영상 보기
-              <span aria-hidden="true">↗</span>
-            </a>
-          </div>
+          <div id="videoContent"></div>
         </article>
 
-        <article class="media-card onyour-card" id="onyourSection">
-          <div class="media-card-head">
+        <article class="compact-card" id="onyour">
+          <div class="card-head">
             <span>05</span>
             <strong>ONYOUR</strong>
           </div>
 
-          <div class="onyour-wordmark">ONYOUR</div>
+          <div class="onyour-visual" id="onyourImageSlot">
+            <div class="image-placeholder is-small">
+              <span>ONYOUR IMAGE</span>
+            </div>
+          </div>
 
-          <p>
-            재즈 힙합 3인조 프로젝트.<br />
-            팀의 음악과 라이브를 확인하세요.
-          </p>
-
-          <a
-            class="outline-button"
-            id="onyourLinkButton"
-            href="#"
-            target="_blank"
-            rel="noreferrer"
-          >
-            ONYOUR 홈페이지
-            <span aria-hidden="true">↗</span>
+          <h3 id="onyourTitle">ONYOUR</h3>
+          <p id="onyourDescription">재즈 힙합 프로젝트의 음악과 라이브를 확인하세요.</p>
+          <a class="line-button" id="onyourButton" href="#" target="_blank" rel="noreferrer">
+            홈페이지 보기 <span>↗</span>
           </a>
         </article>
       </section>
 
-      <section class="links-section" id="listenLinks">
-        <div class="section-heading">
+      <section class="section connect-section" id="connect">
+        <div class="section-head">
           <div>
-            <span class="section-number">06</span>
+            <span class="section-index">06</span>
             <h2>CONNECT</h2>
           </div>
         </div>
 
-        <div class="listen-links">
-          <a class="listen-link" id="soundcloudLink" href="#" target="_blank" rel="noreferrer">
-            <span>SoundCloud</span><b>↗</b>
-          </a>
-          <a class="listen-link" id="beatstarsLink" href="#" target="_blank" rel="noreferrer">
-            <span>BeatStars</span><b>↗</b>
-          </a>
-          <a class="listen-link" id="spotifyLink" href="#" target="_blank" rel="noreferrer">
-            <span>Spotify</span><b>↗</b>
-          </a>
-          <a class="listen-link" id="appleMusicLink" href="#" target="_blank" rel="noreferrer">
-            <span>Apple Music</span><b>↗</b>
-          </a>
-          <a class="listen-link" id="youtubeLink" href="#" target="_blank" rel="noreferrer">
-            <span>YouTube</span><b>↗</b>
-          </a>
-          <a class="listen-link" id="instagramLink" href="#" target="_blank" rel="noreferrer">
-            <span>Instagram</span><b>↗</b>
-          </a>
-          <a class="listen-link is-wide" id="contactLink" href="#">
-            <span>Contact / Collaboration</span><b>↗</b>
-          </a>
-        </div>
+        <div class="link-grid" id="linkGrid"></div>
       </section>
     </main>
 
     <footer class="site-footer">
-      <img src="assets/kenneth-logo-horizontal.jpg" alt="KENNETH" />
-      <p>© 2026 KENNETH</p>
+      <div>
+        <strong id="footerName">KENNETH</strong>
+        <span>HIPHOP / EDM PRODUCER</span>
+      </div>
+      <a href="/admin/" class="admin-link">ADMIN</a>
     </footer>
   </div>
 
   <div class="toast" id="toast" role="status" aria-live="polite"></div>
-
-  <script src="script.js"></script>
+  <script src="/script.js"></script>
 </body>
 </html>

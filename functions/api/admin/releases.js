@@ -1,5 +1,5 @@
-import { json, cleanString, cleanUrl } from "../../../_lib/http.js";
-import { requireAdmin } from "../../../_lib/admin.js";
+import { json, cleanString, cleanUrl } from "../../_lib/http.js";
+import { requireAdmin } from "../../_lib/admin.js";
 
 const RELEASE_FIELDS = [
   "title",
@@ -51,17 +51,22 @@ function normalizeRelease(input) {
   return output;
 }
 
-function getId(context) {
-  const id = Number(context.params.id);
-  return Number.isInteger(id) && id > 0 ? id : 0;
-}
-
-export async function onRequestPut(context) {
+export async function onRequestGet(context) {
   const unauthorized = await requireAdmin(context);
   if (unauthorized) return unauthorized;
 
-  const id = getId(context);
-  if (!id) return json({ error: "잘못된 음원 ID입니다." }, 400);
+  const result = await context.env.DB.prepare(
+    `SELECT *
+     FROM releases
+     ORDER BY sort_order ASC, release_date DESC, id DESC`
+  ).all();
+
+  return json({ releases: result.results || [] });
+}
+
+export async function onRequestPost(context) {
+  const unauthorized = await requireAdmin(context);
+  if (unauthorized) return unauthorized;
 
   const input = await context.request.json().catch(() => ({}));
   const values = normalizeRelease(input);
@@ -72,61 +77,40 @@ export async function onRequestPut(context) {
 
   if (values.is_featured === 1) {
     await context.env.DB.prepare(
-      "UPDATE releases SET is_featured = 0 WHERE id <> ?"
-    )
-      .bind(id)
-      .run();
+      "UPDATE releases SET is_featured = 0"
+    ).run();
   }
 
-  await context.env.DB.prepare(
-    `UPDATE releases SET
-      title = ?,
-      release_type = ?,
-      release_date = ?,
-      genre = ?,
-      description = ?,
-      cover_url = ?,
-      primary_url = ?,
-      spotify_url = ?,
-      apple_music_url = ?,
-      melon_url = ?,
-      youtube_url = ?,
-      soundcloud_url = ?,
-      beatstars_url = ?,
-      is_featured = ?,
-      is_published = ?,
-      sort_order = ?,
-      updated_at = CURRENT_TIMESTAMP
-     WHERE id = ?`
+  const result = await context.env.DB.prepare(
+    `INSERT INTO releases (
+      title,
+      release_type,
+      release_date,
+      genre,
+      description,
+      cover_url,
+      primary_url,
+      spotify_url,
+      apple_music_url,
+      melon_url,
+      youtube_url,
+      soundcloud_url,
+      beatstars_url,
+      is_featured,
+      is_published,
+      sort_order,
+      created_at,
+      updated_at
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)`
   )
-    .bind(...RELEASE_FIELDS.map((field) => values[field]), id)
+    .bind(...RELEASE_FIELDS.map((field) => values[field]))
     .run();
 
   const release = await context.env.DB.prepare(
     "SELECT * FROM releases WHERE id = ?"
   )
-    .bind(id)
+    .bind(result.meta.last_row_id)
     .first();
 
-  if (!release) {
-    return json({ error: "음원을 찾을 수 없습니다." }, 404);
-  }
-
-  return json({ release });
-}
-
-export async function onRequestDelete(context) {
-  const unauthorized = await requireAdmin(context);
-  if (unauthorized) return unauthorized;
-
-  const id = getId(context);
-  if (!id) return json({ error: "잘못된 음원 ID입니다." }, 400);
-
-  await context.env.DB.prepare(
-    "DELETE FROM releases WHERE id = ?"
-  )
-    .bind(id)
-    .run();
-
-  return json({ ok: true });
+  return json({ release }, 201);
 }
