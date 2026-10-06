@@ -6,9 +6,9 @@
   <meta name="color-scheme" content="light" />
   <title>케네쓰음원정산관리</title>
   <meta name="description" content="케네쓰 음원 정산 분석 및 모니터링" />
-  <link rel="stylesheet" href="./style.css?v=10" />
+  <link rel="stylesheet" href="./style.css?v=11" />
   <script defer src="./xlsx-local.js?v=4"></script>
-  <script defer src="./app.js?v=10"></script>
+  <script defer src="./app.js?v=11"></script>
 </head>
 <body>
   <div id="toastHost" class="toast-host" aria-live="polite"></div>
@@ -44,14 +44,10 @@
     <aside class="sidebar">
       <div class="sidebar-brand"><div class="brand-mark small">K</div><div><strong>케네쓰음원정산관리</strong><span>Music Intelligence</span></div></div>
       <nav class="side-nav">
-        <button class="nav-item active" data-page="dashboard"><span>⌂</span>대시보드</button>
-        <button class="nav-item" data-page="months"><span>⌁</span>월별 분석</button>
-        <button class="nav-item" data-page="platforms"><span>◫</span>플랫폼 분석</button>
-        <button class="nav-item" data-page="tracks"><span>♫</span>음원 분석</button>
-        <button class="nav-item" data-page="distributors"><span>◇</span>유통사 분석</button>
-        <button class="nav-item" data-page="records"><span>≡</span>정산내역</button>
-        <button class="nav-item" data-page="quality"><span>✓</span>데이터 품질</button>
-        <button class="nav-item" data-page="import"><span>⇧</span>정산서 가져오기</button>
+        <button class="nav-item nav-group active" data-group="dashboard"><span>⌂</span>대시보드</button>
+        <button class="nav-item nav-group" data-group="analysis"><span>⌁</span>분석</button>
+        <button class="nav-item nav-group" data-group="settlement"><span>≡</span>정산</button>
+        <button class="nav-item nav-group" data-group="data"><span>✓</span>데이터</button>
       </nav>
       <div class="sidebar-bottom"><div class="privacy-note"><span class="status-dot"></span>D1 비공개 저장</div><button id="logoutButton" class="nav-item danger"><span>↪</span>로그아웃</button></div>
     </aside>
@@ -72,6 +68,8 @@
           <button id="refreshButton" class="btn btn-ghost">새로고침</button>
         </div>
       </header>
+
+      <nav id="sectionTabs" class="section-tabs hidden" aria-label="세부 메뉴"></nav>
 
       <section id="page-dashboard" class="page active">
         <div class="status-strip">
