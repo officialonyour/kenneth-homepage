@@ -4,6 +4,11 @@ function text(v, max = 300) { return String(v ?? "").trim().slice(0, max); }
 function integer(v) { const n = Number(v); return Number.isFinite(n) ? Math.round(n) : null; }
 function money(v) { const n = Number(v); return Number.isFinite(n) ? n : 0; }
 function ym(v) { const s = text(v, 7); return /^\d{4}-\d{2}$/.test(s) ? s : null; }
+function monthShift(ymValue, delta) {
+  if (!/^\d{4}-\d{2}$/.test(String(ymValue || ""))) return null;
+  const d = new Date(Date.UTC(Number(ymValue.slice(0,4)), Number(ymValue.slice(5,7)) - 1 + delta, 1));
+  return `${d.getUTCFullYear()}-${String(d.getUTCMonth()+1).padStart(2,"0")}`;
+}
 async function sha256(value) {
   const bytes = new TextEncoder().encode(value);
   const digest = new Uint8Array(await crypto.subtle.digest("SHA-256", bytes));
@@ -11,7 +16,7 @@ async function sha256(value) {
 }
 async function normalize(input, batchId) {
   const settlementYm = ym(input.settlement_ym);
-  const occurrenceYm = ym(input.occurrence_ym);
+  const occurrenceYm = settlementYm ? monthShift(settlementYm, -3) : null;
   const originalCount = input.original_count === null || input.original_count === undefined || input.original_count === "" ? null : integer(input.original_count);
   const adjustedCount = input.adjusted_count === null || input.adjusted_count === undefined || input.adjusted_count === "" ? null : integer(input.adjusted_count);
   const analysisCount = input.analysis_count === null || input.analysis_count === undefined || input.analysis_count === "" ? null : integer(input.analysis_count);
@@ -23,8 +28,8 @@ async function normalize(input, batchId) {
     settlement_year: integer(input.settlement_year) || (settlementYm ? Number(settlementYm.slice(0, 4)) : null),
     settlement_month: integer(input.settlement_month) || (settlementYm ? Number(settlementYm.slice(5, 7)) : null),
     settlement_ym: settlementYm,
-    occurrence_year: integer(input.occurrence_year) || (occurrenceYm ? Number(occurrenceYm.slice(0, 4)) : null),
-    occurrence_month: integer(input.occurrence_month) || (occurrenceYm ? Number(occurrenceYm.slice(5, 7)) : null),
+    occurrence_year: occurrenceYm ? Number(occurrenceYm.slice(0, 4)) : null,
+    occurrence_month: occurrenceYm ? Number(occurrenceYm.slice(5, 7)) : null,
     occurrence_ym: occurrenceYm,
     artist: text(input.artist, 180),
     album_title: text(input.album_title, 240),
@@ -75,10 +80,30 @@ export async function onRequestPost({ request, env }) {
 
   for (let i = 0; i < rows.length; i += 50) {
     const chunk = rows.slice(i, i + 50);
-    const stmts = [];
+    const normalized = [];
     for (const input of chunk) {
       const r = await normalize(input, batchId);
-      if (!r.song_title) { invalid++; continue; }
+      if (!r.song_title || !r.settlement_ym) { invalid++; continue; }
+      normalized.push(r);
+    }
+    if (!normalized.length) continue;
+
+    // Keep imports idempotent even after the occurrence-month correction.  The
+    // identity below intentionally excludes occurrence_ym because it is derived
+    // from settlement_ym by the fixed -3 month rule.
+    const checkStmts = normalized.map(r => db.prepare(`SELECT id FROM music_settlement_records
+      WHERE COALESCE(source_row_no,-1)=COALESCE(?,-1)
+        AND distributor=?
+        AND COALESCE(settlement_ym,'')=COALESCE(?,'')
+        AND song_title=?
+        AND COALESCE(source_key,'')=COALESCE(?,'')
+        AND ABS(COALESCE(settlement_amount,0)-?) < 0.0000001
+      LIMIT 1`).bind(r.source_row_no,r.distributor,r.settlement_ym,r.song_title,r.source_key,r.settlement_amount));
+    const checks = await db.batch(checkStmts);
+    const stmts = [];
+    normalized.forEach((r, idx) => {
+      const exists = Array.isArray(checks[idx]?.results) && checks[idx].results.length > 0;
+      if (exists) { duplicates++; return; }
       stmts.push(db.prepare(`INSERT OR IGNORE INTO music_settlement_records (
         source_row_no,distributor,source_file,settlement_year,settlement_month,settlement_ym,occurrence_year,occurrence_month,occurrence_ym,
         artist,album_title,song_title,original_platform,original_service,source_key,platform,original_count,adjusted_count,analysis_count,count_basis,
@@ -88,7 +113,7 @@ export async function onRequestPost({ request, env }) {
         r.artist,r.album_title,r.song_title,r.original_platform,r.original_service,r.source_key,r.platform,r.original_count,r.adjusted_count,r.analysis_count,r.count_basis,
         r.estimate_method,r.estimate_confidence,r.settlement_amount,r.revenue_source,r.notes,r.month_song_key,r.import_batch_id,r.row_hash
       ));
-    }
+    });
     if (!stmts.length) continue;
     const results = await db.batch(stmts);
     for (const res of results) Number(res.meta?.changes || 0) > 0 ? inserted++ : duplicates++;
