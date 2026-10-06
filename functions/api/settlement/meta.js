@@ -1,0 +1,2 @@
+import { json, requireDb } from "../../_shared/settlement.js";
+export async function onRequestGet({env}){const db=requireDb(env); const years=(await db.prepare("SELECT DISTINCT settlement_year value FROM settlement_records WHERE settlement_year IS NOT NULL ORDER BY value DESC").all()).results||[]; const distributors=(await db.prepare("SELECT DISTINCT distributor value FROM settlement_records WHERE distributor IS NOT NULL AND distributor <> '' ORDER BY value").all()).results||[]; return json({ok:true,years:years.map(x=>x.value),distributors:distributors.map(x=>x.value)});}

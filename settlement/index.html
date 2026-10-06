@@ -1,0 +1,217 @@
+<!doctype html>
+<html lang="ko">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <meta name="color-scheme" content="light" />
+  <title>케네쓰음원정산관리</title>
+  <meta name="description" content="케네쓰 음원 정산 통합관리" />
+  <link rel="stylesheet" href="./style.css?v=1" />
+  <script defer src="https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js"></script>
+  <script defer src="./app.js?v=1"></script>
+</head>
+<body>
+  <div id="toastHost" class="toast-host" aria-live="polite"></div>
+
+  <section id="loginView" class="login-shell hidden" aria-labelledby="loginTitle">
+    <div class="login-card">
+      <div class="brand-mark" aria-hidden="true">K</div>
+      <p class="eyebrow">PRIVATE MUSIC SETTLEMENT</p>
+      <h1 id="loginTitle">케네쓰음원정산관리</h1>
+      <p class="login-copy">정산 자료는 로그인 후에만 조회됩니다.</p>
+      <form id="loginForm" class="login-form">
+        <label for="passwordInput">관리 비밀번호</label>
+        <div class="password-row">
+          <input id="passwordInput" name="password" type="password" autocomplete="current-password" required autofocus />
+          <button id="loginButton" class="btn btn-primary" type="submit">로그인</button>
+        </div>
+        <p id="loginMessage" class="form-message" role="status"></p>
+      </form>
+      <p class="login-foot">비밀번호는 홈페이지 소스에 저장되지 않습니다.</p>
+    </div>
+  </section>
+
+  <section id="setupView" class="login-shell hidden" aria-labelledby="setupTitle">
+    <div class="login-card setup-card">
+      <div class="brand-mark" aria-hidden="true">K</div>
+      <p class="eyebrow">SETUP REQUIRED</p>
+      <h1 id="setupTitle">서버 설정이 필요합니다</h1>
+      <p class="login-copy">Cloudflare Pages에 D1 바인딩과 Secret을 연결하면 바로 사용할 수 있습니다.</p>
+      <div class="setup-list">
+        <div><b>1</b><span>D1 바인딩 이름: <code>SETTLEMENT_DB</code></span></div>
+        <div><b>2</b><span>Secret: <code>ADMIN_PASSWORD</code></span></div>
+        <div><b>3</b><span>Secret: <code>SESSION_SECRET</code></span></div>
+      </div>
+      <button id="retryStatusButton" class="btn btn-primary" type="button">설정 확인</button>
+    </div>
+  </section>
+
+  <div id="appView" class="app-shell hidden">
+    <aside class="sidebar">
+      <div class="sidebar-brand">
+        <div class="brand-mark small" aria-hidden="true">K</div>
+        <div>
+          <strong>케네쓰음원정산관리</strong>
+          <span>Settlement Manager</span>
+        </div>
+      </div>
+
+      <nav class="side-nav" aria-label="주 메뉴">
+        <button class="nav-item active" data-page="dashboard" type="button"><span>⌂</span>대시보드</button>
+        <button class="nav-item" data-page="records" type="button"><span>≡</span>정산내역</button>
+        <button class="nav-item" data-page="songs" type="button"><span>♫</span>음원별 집계</button>
+        <button class="nav-item" data-page="import" type="button"><span>⇧</span>정산서 가져오기</button>
+      </nav>
+
+      <div class="sidebar-bottom">
+        <div class="privacy-note"><span class="status-dot"></span>D1 비공개 저장</div>
+        <button id="logoutButton" class="nav-item danger" type="button"><span>↪</span>로그아웃</button>
+      </div>
+    </aside>
+
+    <main class="main-content">
+      <header class="topbar">
+        <div>
+          <p id="pageEyebrow" class="eyebrow">OVERVIEW</p>
+          <h1 id="pageTitle">대시보드</h1>
+        </div>
+        <div class="topbar-actions">
+          <button id="refreshButton" class="btn btn-ghost" type="button">새로고침</button>
+          <button id="openImportButton" class="btn btn-primary" type="button">정산서 업로드</button>
+        </div>
+      </header>
+
+      <section id="page-dashboard" class="page active">
+        <div class="period-row">
+          <div class="period-filter">
+            <label for="dashboardYear">기준연도</label>
+            <select id="dashboardYear"><option value="">전체</option></select>
+          </div>
+          <p id="dashboardUpdated" class="muted">-</p>
+        </div>
+
+        <div class="kpi-grid">
+          <article class="kpi-card"><span>총 정산액</span><strong id="kpiSettlement">₩0</strong><em id="kpiSettlementSub">전체 기간</em></article>
+          <article class="kpi-card"><span>총 매출액</span><strong id="kpiGross">₩0</strong><em>원본 정산자료 기준</em></article>
+          <article class="kpi-card"><span>총 카운트</span><strong id="kpiCount">0</strong><em id="kpiCountSub">실제 0 · 추정 0</em></article>
+          <article class="kpi-card"><span>등록 음원</span><strong id="kpiSongs">0곡</strong><em id="kpiRowsSub">정산 0건</em></article>
+          <article class="kpi-card warning"><span>지급대기/이월</span><strong id="kpiPending">₩0</strong><em id="kpiPendingSub">0건</em></article>
+        </div>
+
+        <div class="dashboard-grid">
+          <article class="panel wide">
+            <div class="panel-head"><div><p class="panel-kicker">MONTHLY</p><h2>월별 정산 추이</h2></div><span id="monthlyRange" class="chip">최근 12개월</span></div>
+            <div id="monthlyChart" class="monthly-chart empty-state">데이터가 없습니다.</div>
+          </article>
+          <article class="panel">
+            <div class="panel-head"><div><p class="panel-kicker">TOP TRACKS</p><h2>수익 상위 음원</h2></div></div>
+            <div id="topSongs" class="rank-list empty-state">데이터가 없습니다.</div>
+          </article>
+          <article class="panel">
+            <div class="panel-head"><div><p class="panel-kicker">DISTRIBUTORS</p><h2>유통사별 정산</h2></div></div>
+            <div id="distributorList" class="rank-list empty-state">데이터가 없습니다.</div>
+          </article>
+        </div>
+      </section>
+
+      <section id="page-records" class="page">
+        <div class="toolbar panel compact">
+          <div class="filter-grid">
+            <label>검색<input id="recordSearch" type="search" placeholder="곡명 · 아티스트 · 플랫폼" /></label>
+            <label>연도<select id="recordYear"><option value="">전체</option></select></label>
+            <label>유통사<select id="recordDistributor"><option value="">전체</option></select></label>
+            <label>지급상태<select id="recordPayment"><option value="">전체</option><option value="지급">지급</option><option value="이월">이월</option><option value="대기">대기</option></select></label>
+          </div>
+          <div class="toolbar-actions">
+            <button id="exportCsvButton" class="btn btn-ghost" type="button">CSV 내보내기</button>
+            <button id="openManualButton" class="btn btn-primary" type="button">직접 입력</button>
+          </div>
+        </div>
+
+        <div class="panel table-panel">
+          <div class="table-wrap">
+            <table class="data-table">
+              <thead><tr>
+                <th>정산월</th><th>유통사</th><th>아티스트</th><th>곡명</th><th>플랫폼/발생처</th>
+                <th class="num">매출액</th><th class="num">정산액</th><th class="num">카운트</th><th>구분</th><th>지급</th><th></th>
+              </tr></thead>
+              <tbody id="recordsBody"></tbody>
+            </table>
+          </div>
+          <div class="pagination">
+            <button id="prevPage" class="btn btn-ghost btn-sm" type="button">이전</button>
+            <span id="pageInfo">1 / 1</span>
+            <button id="nextPage" class="btn btn-ghost btn-sm" type="button">다음</button>
+          </div>
+        </div>
+      </section>
+
+      <section id="page-songs" class="page">
+        <div class="panel table-panel">
+          <div class="panel-head"><div><p class="panel-kicker">TRACK SUMMARY</p><h2>음원별 누적 집계</h2></div><input id="songSearch" class="inline-search" type="search" placeholder="곡명 검색" /></div>
+          <div class="table-wrap">
+            <table class="data-table songs-table">
+              <thead><tr><th>#</th><th>곡명</th><th>아티스트</th><th class="num">누적 매출</th><th class="num">누적 정산</th><th class="num">실제 카운트</th><th class="num">추정 카운트</th><th>최근 정산월</th></tr></thead>
+              <tbody id="songsBody"></tbody>
+            </table>
+          </div>
+        </div>
+      </section>
+
+      <section id="page-import" class="page">
+        <div class="import-layout">
+          <article class="panel import-card">
+            <div class="panel-head"><div><p class="panel-kicker">IMPORT</p><h2>통합 정산 엑셀 가져오기</h2></div></div>
+            <p class="muted">기존 통합관리 엑셀의 <b>유통사 · 프로젝트/아티스트 · 곡명 · 정산년월 · 매출액 · 정산액 · 카운트 · 보정카운트</b> 구조를 자동 인식합니다.</p>
+            <label id="dropZone" class="drop-zone" for="fileInput">
+              <input id="fileInput" type="file" accept=".xlsx,.xls,.csv" hidden />
+              <span class="drop-icon">⇧</span>
+              <strong>정산서 파일 선택</strong>
+              <small>XLSX · XLS · CSV</small>
+            </label>
+            <div id="fileInfo" class="file-info hidden"></div>
+            <div class="estimate-rule">
+              <h3>추정 카운트 규칙</h3>
+              <ol>
+                <li>정산서의 실제 <b>카운트</b>가 있으면 그대로 사용</li>
+                <li><b>보정카운트</b>가 있으면 추정값으로 우선 사용</li>
+                <li>둘 다 없으면 동일 음원/유통사의 <b>1카운트당 수익 중앙값</b>으로 추정</li>
+              </ol>
+              <p>추정값은 실제 카운트와 별도 저장되며 화면에서 <span class="badge estimated">추정</span>으로 표시됩니다.</p>
+            </div>
+          </article>
+
+          <article class="panel preview-card">
+            <div class="panel-head"><div><p class="panel-kicker">PREVIEW</p><h2>업로드 미리보기</h2></div><span id="previewCount" class="chip">0건</span></div>
+            <div id="importSummary" class="import-summary empty-state">파일을 선택하면 정산 데이터와 추정 카운트를 먼저 확인할 수 있습니다.</div>
+            <div id="previewTableWrap" class="table-wrap hidden">
+              <table class="data-table preview-table"><thead><tr><th>정산월</th><th>유통사</th><th>곡명</th><th class="num">정산액</th><th class="num">카운트</th><th>구분</th></tr></thead><tbody id="previewBody"></tbody></table>
+            </div>
+            <button id="importButton" class="btn btn-primary btn-block" type="button" disabled>D1에 저장</button>
+          </article>
+        </div>
+      </section>
+    </main>
+  </div>
+
+  <dialog id="manualDialog" class="modal">
+    <form id="manualForm" method="dialog">
+      <div class="modal-head"><div><p class="panel-kicker">MANUAL ENTRY</p><h2>정산내역 직접 입력</h2></div><button class="icon-btn" value="cancel" aria-label="닫기">×</button></div>
+      <div class="form-grid">
+        <label>정산년월<input name="settlement_ym" type="month" required /></label>
+        <label>유통사<input name="distributor" required /></label>
+        <label>프로젝트/아티스트<input name="project_artist" /></label>
+        <label>곡명<input name="song_title" required /></label>
+        <label>플랫폼/발생처<input name="platform_source" /></label>
+        <label>매출액<input name="gross_revenue" type="number" step="0.01" /></label>
+        <label>정산액<input name="settlement_amount" type="number" step="0.01" /></label>
+        <label>실제 카운트<input name="actual_count" type="number" min="0" step="1" /></label>
+        <label>추정 카운트<input name="estimated_count" type="number" min="0" step="1" /></label>
+        <label>지급여부<select name="payment_status"><option value="">미지정</option><option>지급</option><option>이월</option><option>대기</option></select></label>
+        <label class="span-2">비고<textarea name="notes" rows="3"></textarea></label>
+      </div>
+      <div class="modal-actions"><button class="btn btn-ghost" value="cancel">취소</button><button id="manualSaveButton" class="btn btn-primary" value="default">저장</button></div>
+    </form>
+  </dialog>
+</body>
+</html>
