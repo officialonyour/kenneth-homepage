@@ -1,5 +1,5 @@
 import { json, requireDb } from "../../_shared/settlement.js";
-import { invalidateSettlementCaches } from "../../_shared/settlement-cache.js";
+import { invalidateAnalyticsCache } from "../../_shared/settlement-r2-cache.js";
 
 function text(v, max = 300) { return String(v ?? "").trim().slice(0, max); }
 function integer(v) { const n = Number(v); return Number.isFinite(n) ? Math.round(n) : null; }
@@ -123,7 +123,7 @@ export async function onRequestPost({ request, env }) {
   await db.prepare(`UPDATE settlement_import_batches SET rows_received=rows_received+?, rows_inserted=rows_inserted+?, duplicate_rows=duplicate_rows+?, mapping_rows=mapping_rows+?, completed_at=CASE WHEN ? THEN datetime('now') ELSE completed_at END WHERE batch_id=?`)
     .bind(rows.length, inserted, duplicates, mappingUpserts, body.finalChunk ? 1 : 0, batchId).run();
 
-  if (inserted > 0 || mappingUpserts > 0) await invalidateSettlementCaches(db);
+  if (inserted > 0 || mappingUpserts > 0) await invalidateAnalyticsCache(env).catch(()=>{});
 
   return json({ ok:true, batchId, received:rows.length, inserted, duplicates, invalid, mappingUpserts });
 }

@@ -1,5 +1,5 @@
-import { json, requireDb } from "../../_shared/settlement.js";
-import { getAnalyticsCache, setAnalyticsCache, loadSettlementRows } from "../../_shared/settlement-cache.js";
+import { json } from "../../_shared/settlement.js";
+import { getAnalyticsCache, setAnalyticsCache, loadSettlementRows } from "../../_shared/settlement-r2-cache.js";
 
 function n(v) { const x = Number(v); return Number.isFinite(x) ? x : 0; }
 function pct(cur, prev) { return prev > 0 ? ((cur / prev) - 1) * 100 : null; }
@@ -149,36 +149,41 @@ function baseTrackRow(song, items) {
 }
 
 export async function onRequestGet({ request, env }) {
-  const db = requireDb(env);
   const u = new URL(request.url);
   const view = u.searchParams.get("view") || "overview";
   const requestedScope = safeScope(u.searchParams.get("scope"));
   const requestedPeriod = String(u.searchParams.get("period") || "").trim();
   const requestedSong = String(u.searchParams.get("song") || "").trim();
-  const cacheKey = ["v15", view, requestedScope, requestedPeriod || "-", requestedSong || "-"].join("|");
+  const cacheKey = ["v16", view, requestedScope, requestedPeriod || "-", requestedSong || "-"].join("|");
 
-  const cached = await getAnalyticsCache(db, cacheKey);
+  const cached = await getAnalyticsCache(env, cacheKey);
   if (cached?.payload) {
     const payload = cached.payload;
-    payload._cache = { hit:true, strategy:"materialized_response_v15", generatedAt:cached.generatedAt };
-    payload._d1 = { strategy:"materialized_response_v15", queries:1, rowsRead:cached.rowsRead || 1 };
+    payload._cache = { hit:true, strategy:"r2_materialized_response_v16", generatedAt:cached.generatedAt };
+    payload._d1 = { strategy:"r2_only_v16", queries:0, rowsRead:0 };
     return json(payload);
   }
 
-  const snapshot = await loadSettlementRows(db);
+  let snapshot;
+  try {
+    snapshot = await loadSettlementRows(env);
+  } catch (error) {
+    const msg = String(error?.message || error || "r2_seed_required");
+    return json({ ok:false, error:msg }, msg === "r2_seed_required" ? 503 : 500);
+  }
   const allRows = snapshot.rows || [];
-  const d1RowsRead = Number(snapshot.rowsRead || 0);
+  const d1RowsRead = Number(snapshot.d1RowsRead || 0);
 
   const finish = async (payload) => {
     const stored = structuredClone(payload);
-    stored._cache = { hit:false, strategy:"materialized_response_v15" };
+    stored._cache = { hit:false, strategy:"r2_materialized_response_v16" };
     stored._d1 = {
       strategy:snapshot.source,
-      queries:snapshot.source === "snapshot_v15" ? 2 : 1,
+      queries:d1RowsRead > 0 ? 1 : 0,
       rowsRead:d1RowsRead,
       snapshotChunks:Number(snapshot.chunkCount || 0)
     };
-    await setAnalyticsCache(db, cacheKey, stored);
+    await setAnalyticsCache(env, cacheKey, stored);
     return json(stored);
   };
 
@@ -211,7 +216,7 @@ export async function onRequestGet({ request, env }) {
     currentWindow,
     previousWindow,
     comparisonMode: scope === "month" ? "month" : "three_month",
-    _d1: { strategy: snapshot.source, queries: snapshot.source === "snapshot_v15" ? 2 : 1, rowsRead: d1RowsRead },
+    _d1: { strategy: snapshot.source, queries: d1RowsRead > 0 ? 1 : 0, rowsRead: d1RowsRead },
   };
 
   if (view === "overview") {
@@ -404,14 +409,16 @@ export async function onRequestGet({ request, env }) {
     };
     const artists=[...groupRows(allRows,r=>r.artist)].map(([artist,items])=>({artist,rows_count:items.length,revenue:sumField(items,"settlement_amount")})).sort((a,b)=>b.rows_count-a.rows_count);
     const bases=[...groupRows(allRows,r=>r.count_basis)].map(([count_basis,items])=>({count_basis,rows_count:items.length,revenue:sumField(items,"settlement_amount")})).sort((a,b)=>b.rows_count-a.rows_count);
-    const importsResult=await db.prepare(`SELECT batch_id,file_name,rows_received,rows_inserted,duplicate_rows,mapping_rows,started_at,completed_at FROM settlement_import_batches ORDER BY started_at DESC LIMIT 20`).all();
-    const mapResult=await db.prepare(`SELECT source_key FROM settlement_platform_mapping`).all();
-    const imports=importsResult.results||[], mappedKeys=new Set((mapResult.results||[]).map(x=>x.source_key));
+    const mappings=Array.isArray(snapshot.mappings)?snapshot.mappings:[];
+    const mappedKeys=new Set(mappings.map(x=>String(x?.source_key||"").trim()).filter(Boolean));
     const uniqueSourceKeys=new Set(allRows.map(r=>r.source_key).filter(Boolean));
-    let unmappedSourceKeys=0; for(const k of uniqueSourceKeys) if(!mappedKeys.has(k)) unmappedSourceKeys++;
-    const payload={ok:true,summary,artists,bases,imports,mappingRows:mappedKeys.size,unmappedSourceKeys,_d1:{strategy:snapshot.source,queries:(snapshot.source==="snapshot_v15"?2:1)+2,rowsRead:d1RowsRead+Number(importsResult.meta?.rows_read||imports.length)+Number(mapResult.meta?.rows_read||mappedKeys.size)}};
-    await setAnalyticsCache(db, cacheKey, payload);
-    payload._cache={hit:false,strategy:"materialized_response_v15"};
+    let unmappedSourceKeys=0;
+    if(mappedKeys.size){for(const k of uniqueSourceKeys) if(!mappedKeys.has(k)) unmappedSourceKeys++;}
+    else unmappedSourceKeys=allRows.filter(r=>!r.platform||r.platform==="미분류").length;
+    const imports=[];
+    const payload={ok:true,summary,artists,bases,imports,mappingRows:mappedKeys.size||Number(snapshot.mappingCount||0),unmappedSourceKeys,_d1:{strategy:snapshot.source,queries:d1RowsRead>0?1:0,rowsRead:d1RowsRead}};
+    await setAnalyticsCache(env, cacheKey, payload);
+    payload._cache={hit:false,strategy:"r2_materialized_response_v16"};
     return json(payload);
   }
 

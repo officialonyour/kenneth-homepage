@@ -1,18 +1,22 @@
-import { json, requireDb } from "../../_shared/settlement.js";
-import { getAnalyticsCache, setAnalyticsCache, loadSettlementRows } from "../../_shared/settlement-cache.js";
+import { json } from "../../_shared/settlement.js";
+import { getAnalyticsCache, setAnalyticsCache, loadSettlementRows, getR2Status } from "../../_shared/settlement-r2-cache.js";
 
 export async function onRequestGet({env}){
-  const db=requireDb(env);
-  const cacheKey="v15|meta";
-  const cached=await getAnalyticsCache(db,cacheKey);
+  const cacheKey="v16|meta";
+  const cached=await getAnalyticsCache(env,cacheKey);
   if(cached?.payload){
     const payload=cached.payload;
-    payload._cache={hit:true,strategy:"materialized_response_v15",generatedAt:cached.generatedAt};
-    payload._d1={strategy:"materialized_response_v15",queries:1,rowsRead:cached.rowsRead||1};
+    payload._cache={hit:true,strategy:"r2_materialized_response_v16",generatedAt:cached.generatedAt};
+    payload._d1={strategy:"r2_only_v16",queries:0,rowsRead:0};
     return json(payload);
   }
 
-  const snapshot=await loadSettlementRows(db);
+  let snapshot;
+  try { snapshot=await loadSettlementRows(env); }
+  catch(error){
+    const msg=String(error?.message||error||"r2_seed_required");
+    return json({ok:false,error:msg,...getR2Status(env)}, msg==="r2_seed_required"?503:500);
+  }
   const rows=snapshot.rows||[];
   const distributors=[...new Set(rows.map(r=>String(r.distributor||"").trim()).filter(Boolean))].sort((a,b)=>a.localeCompare(b,"ko"));
   const platforms=[...new Set(rows.map(r=>String(r.platform||"").trim()).filter(Boolean))].sort((a,b)=>a.localeCompare(b,"ko"));
@@ -25,7 +29,13 @@ export async function onRequestGet({env}){
     settlement_max:settlement.at(-1)||null,
     rows_count:rows.length,
   };
-  const payload={ok:true,distributors,platforms,bounds,_d1:{strategy:snapshot.source,queries:snapshot.source==="snapshot_v15"?2:1,rowsRead:Number(snapshot.rowsRead||0),snapshotChunks:Number(snapshot.chunkCount||0)},_cache:{hit:false,strategy:"materialized_response_v15"}};
-  await setAnalyticsCache(db,cacheKey,payload);
+  const payload={
+    ok:true,distributors,platforms,bounds,
+    readSource:snapshot.source,
+    ...getR2Status(env),
+    _d1:{strategy:snapshot.source,queries:Number(snapshot.d1RowsRead||0)>0?1:0,rowsRead:Number(snapshot.d1RowsRead||0)},
+    _cache:{hit:false,strategy:"r2_materialized_response_v16"}
+  };
+  await setAnalyticsCache(env,cacheKey,payload);
   return json(payload);
 }
