@@ -1,4 +1,5 @@
 import { json, requireDb } from "../../_shared/settlement.js";
+import { getAnalyticsCache, setAnalyticsCache, loadSettlementRows } from "../../_shared/settlement-cache.js";
 
 function n(v) { const x = Number(v); return Number.isFinite(x) ? x : 0; }
 function pct(cur, prev) { return prev > 0 ? ((cur / prev) - 1) * 100 : null; }
@@ -151,15 +152,35 @@ export async function onRequestGet({ request, env }) {
   const db = requireDb(env);
   const u = new URL(request.url);
   const view = u.searchParams.get("view") || "overview";
+  const requestedScope = safeScope(u.searchParams.get("scope"));
+  const requestedPeriod = String(u.searchParams.get("period") || "").trim();
+  const requestedSong = String(u.searchParams.get("song") || "").trim();
+  const cacheKey = ["v15", view, requestedScope, requestedPeriod || "-", requestedSong || "-"].join("|");
 
-  // V14: one raw D1 read per analytics request. All grouping/aggregation happens
-  // in the Worker after this single scan, instead of repeatedly scanning D1.
-  const rawResult = await db.prepare(`SELECT
-    distributor,settlement_ym,occurrence_ym,artist,album_title,song_title,platform,
-    original_count,analysis_count,count_basis,settlement_amount,source_key
-    FROM music_settlement_records`).all();
-  const allRows = rawResult.results || [];
-  const d1RowsRead = Number(rawResult.meta?.rows_read || allRows.length);
+  const cached = await getAnalyticsCache(db, cacheKey);
+  if (cached?.payload) {
+    const payload = cached.payload;
+    payload._cache = { hit:true, strategy:"materialized_response_v15", generatedAt:cached.generatedAt };
+    payload._d1 = { strategy:"materialized_response_v15", queries:1, rowsRead:cached.rowsRead || 1 };
+    return json(payload);
+  }
+
+  const snapshot = await loadSettlementRows(db);
+  const allRows = snapshot.rows || [];
+  const d1RowsRead = Number(snapshot.rowsRead || 0);
+
+  const finish = async (payload) => {
+    const stored = structuredClone(payload);
+    stored._cache = { hit:false, strategy:"materialized_response_v15" };
+    stored._d1 = {
+      strategy:snapshot.source,
+      queries:snapshot.source === "snapshot_v15" ? 2 : 1,
+      rowsRead:d1RowsRead,
+      snapshotChunks:Number(snapshot.chunkCount || 0)
+    };
+    await setAnalyticsCache(db, cacheKey, stored);
+    return json(stored);
+  };
 
   const activeDistributors = distinctCount(allRows, "distributor");
   const globalLatest = maxField(allRows, "occurrence_ym");
@@ -190,7 +211,7 @@ export async function onRequestGet({ request, env }) {
     currentWindow,
     previousWindow,
     comparisonMode: scope === "month" ? "month" : "three_month",
-    _d1: { strategy: "single_scan_v14", queries: 1, rowsRead: d1RowsRead },
+    _d1: { strategy: snapshot.source, queries: snapshot.source === "snapshot_v15" ? 2 : 1, rowsRead: d1RowsRead },
   };
 
   if (view === "overview") {
@@ -244,7 +265,7 @@ export async function onRequestGet({ request, env }) {
       total: totalRevenue,
     };
 
-    return json({...responseBase, totals, recent, monthly, topTracks, topPlatforms, coverage, trackMomentum, platformMomentum, concentration});
+    return finish({...responseBase, totals, recent, monthly, topTracks, topPlatforms, coverage, trackMomentum, platformMomentum, concentration});
   }
 
   if (view === "platforms") {
@@ -275,7 +296,7 @@ export async function onRequestGet({ request, env }) {
         growth_pct: pct(current_revenue, previous_revenue),
       };
     }).sort((a,b)=>b.revenue-a.revenue);
-    return json({...responseBase, rows:out});
+    return finish({...responseBase, rows:out});
   }
 
   if (view === "track-detail") {
@@ -341,7 +362,7 @@ export async function onRequestGet({ request, env }) {
     platformMonthly.sort((a,b)=>a.ym.localeCompare(b.ym)||b.revenue-a.revenue);
 
     const distributors=[...groupRows(scopedSong,r=>r.distributor)].map(([distributor,items])=>{const revenue=sumField(items,"settlement_amount");return {distributor,revenue,rows_count:items.length,platforms_count:distinctCount(items,"platform"),latest_month:maxField(items,"occurrence_ym"),share_pct:totalRevenue>0?revenue/totalRevenue*100:0};}).sort((a,b)=>b.revenue-a.revenue);
-    return json({...responseBase,summary,recent,monthly,yearly,platforms,platformMonthly,distributors});
+    return finish({...responseBase,summary,recent,monthly,yearly,platforms,platformMonthly,distributors});
   }
 
   if (view === "tracks") {
@@ -350,13 +371,13 @@ export async function onRequestGet({ request, env }) {
       const x=baseTrackRow(song,items),m=mm.get(song)||{},cur=n(m.current_revenue),prev=n(m.previous_revenue);
       return {...x,current_revenue:cur,previous_revenue:prev,delta:cur-prev,growth_pct:pct(cur,prev)};
     }).sort((a,b)=>b.revenue-a.revenue);
-    return json({...responseBase,rows:out});
+    return finish({...responseBase,rows:out});
   }
 
   if (view === "months") {
     const rows=monthlyAgg(contextRows);
     const out=rows.map((x,i)=>({...x,complete:n(x.distributors_count)>=activeDistributors,mom_pct:i?pct(n(x.revenue),n(rows[i-1].revenue)):null}));
-    return json({...responseBase,activeDistributors,rows:out});
+    return finish({...responseBase,activeDistributors,rows:out});
   }
 
   if (view === "distributors") {
@@ -365,7 +386,7 @@ export async function onRequestGet({ request, env }) {
       const bc=basisCounts(items), revenue=sumField(items,"settlement_amount");
       return {distributor,revenue,rows_count:items.length,tracks_count:distinctCount(items,"song_title"),platforms_count:distinctCount(items,"platform"),latest_occurrence:maxField(items,"occurrence_ym"),latest_settlement:maxField(items,"settlement_ym"),actual_count:sumWhere(items,r=>n(r.original_count)>0,"original_count"),...bc,share_pct:totalRevenue>0?revenue/totalRevenue*100:0,count_actual_row_pct:items.length?bc.actual_rows/items.length*100:0};
     }).sort((a,b)=>b.revenue-a.revenue);
-    return json({...responseBase,rows});
+    return finish({...responseBase,rows});
   }
 
   if (view === "quality") {
@@ -388,7 +409,10 @@ export async function onRequestGet({ request, env }) {
     const imports=importsResult.results||[], mappedKeys=new Set((mapResult.results||[]).map(x=>x.source_key));
     const uniqueSourceKeys=new Set(allRows.map(r=>r.source_key).filter(Boolean));
     let unmappedSourceKeys=0; for(const k of uniqueSourceKeys) if(!mappedKeys.has(k)) unmappedSourceKeys++;
-    return json({ok:true,summary,artists,bases,imports,mappingRows:mappedKeys.size,unmappedSourceKeys,_d1:{strategy:"single_scan_v14",queries:3,rowsRead:d1RowsRead+Number(importsResult.meta?.rows_read||imports.length)+Number(mapResult.meta?.rows_read||mappedKeys.size)}});
+    const payload={ok:true,summary,artists,bases,imports,mappingRows:mappedKeys.size,unmappedSourceKeys,_d1:{strategy:snapshot.source,queries:(snapshot.source==="snapshot_v15"?2:1)+2,rowsRead:d1RowsRead+Number(importsResult.meta?.rows_read||imports.length)+Number(mapResult.meta?.rows_read||mappedKeys.size)}};
+    await setAnalyticsCache(db, cacheKey, payload);
+    payload._cache={hit:false,strategy:"materialized_response_v15"};
+    return json(payload);
   }
 
   return json({ok:false,error:"unknown_view"},400);
