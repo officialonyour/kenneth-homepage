@@ -17,14 +17,24 @@ export async function onRequestGet({request,env}){
   if(distributor){clauses.push("distributor=?");binds.push(distributor)}
   if(platform){clauses.push("platform=?");binds.push(platform)}
   if(countBasis){clauses.push("count_basis=?");binds.push(countBasis)}
-  if(scope==="year"&&/^\d{4}$/.test(period)){clauses.push("substr(occurrence_ym,1,4)=?");binds.push(period)}
+  if(scope==="year"&&/^\d{4}$/.test(period)){clauses.push("occurrence_ym>=? AND occurrence_ym<?");binds.push(`${period}-01`,`${Number(period)+1}-01`)}
   if(scope==="month"&&/^\d{4}-\d{2}$/.test(period)){clauses.push("occurrence_ym=?");binds.push(period)}
   if(/^\d{4}-\d{2}$/.test(from)){clauses.push("occurrence_ym>=?");binds.push(from)}
   if(/^\d{4}-\d{2}$/.test(to)){clauses.push("occurrence_ym<=?");binds.push(to)}
   const where=clauses.length?`WHERE ${clauses.join(" AND ")}`:"", offset=(page-1)*limit;
-  const cstmt=db.prepare(`SELECT COUNT(*) total FROM music_settlement_records ${where}`); const crow=await (binds.length?cstmt.bind(...binds):cstmt).first();
-  const rows=(await db.prepare(`SELECT id,source_row_no,distributor,source_file,settlement_ym,occurrence_ym,artist,album_title,song_title,original_platform,original_service,platform,original_count,adjusted_count,analysis_count,count_basis,estimate_method,estimate_confidence,settlement_amount,revenue_source,notes FROM music_settlement_records ${where} ORDER BY COALESCE(occurrence_ym,'0000-00') DESC,id DESC LIMIT ? OFFSET ?`).bind(...binds,limit,offset).all()).results||[];
-  return json({ok:true,scope,period:scope==="all"?null:period,rows,total:Number(crow?.total||0),page,limit});
+
+  // V14: a single SELECT supplies both the page and total count. This avoids
+  // the previous COUNT(*) scan followed by a second row query.
+  const result=await db.prepare(`SELECT
+    id,source_row_no,distributor,source_file,settlement_ym,occurrence_ym,artist,album_title,song_title,
+    original_platform,original_service,platform,original_count,adjusted_count,analysis_count,count_basis,
+    estimate_method,estimate_confidence,settlement_amount,revenue_source,notes,
+    COUNT(*) OVER() AS _total
+    FROM music_settlement_records ${where}
+    ORDER BY COALESCE(occurrence_ym,'0000-00') DESC,id DESC LIMIT ? OFFSET ?`).bind(...binds,limit,offset).all();
+  const rows=(result.results||[]).map(r=>{const x={...r};delete x._total;return x});
+  const total=Number(result.results?.[0]?._total||0);
+  return json({ok:true,scope,period:scope==="all"?null:period,rows,total,page,limit,_d1:{strategy:"single_query_v14",queries:1,rowsRead:Number(result.meta?.rows_read||rows.length)}});
 }
 
 export async function onRequestPost({request,env}){
