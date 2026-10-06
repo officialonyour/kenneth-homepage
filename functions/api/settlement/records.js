@@ -8,7 +8,8 @@ async function hashText(s){const d=new Uint8Array(await crypto.subtle.digest("SH
 export async function onRequestGet({request,env}){
   const db=requireDb(env), u=new URL(request.url);
   const q=txt(u.searchParams.get("q")); const distributor=txt(u.searchParams.get("distributor")); const platform=txt(u.searchParams.get("platform"));
-  const basis=u.searchParams.get("basis")==="settlement"?"settlement":"occurrence"; const timeCol=basis==="settlement"?"settlement_ym":"occurrence_ym";
+  const scope=["year","month"].includes(u.searchParams.get("scope"))?u.searchParams.get("scope"):"all";
+  const period=txt(u.searchParams.get("period"),7);
   const from=txt(u.searchParams.get("from"),7), to=txt(u.searchParams.get("to"),7);
   const countBasis=txt(u.searchParams.get("count_basis"),30); const page=Math.max(1,Number(u.searchParams.get("page"))||1); const limit=Math.min(500,Math.max(1,Number(u.searchParams.get("limit"))||50));
   const clauses=[], binds=[];
@@ -16,12 +17,14 @@ export async function onRequestGet({request,env}){
   if(distributor){clauses.push("distributor=?");binds.push(distributor)}
   if(platform){clauses.push("platform=?");binds.push(platform)}
   if(countBasis){clauses.push("count_basis=?");binds.push(countBasis)}
-  if(/^\d{4}-\d{2}$/.test(from)){clauses.push(`${timeCol}>=?`);binds.push(from)}
-  if(/^\d{4}-\d{2}$/.test(to)){clauses.push(`${timeCol}<=?`);binds.push(to)}
+  if(scope==="year"&&/^\d{4}$/.test(period)){clauses.push("substr(occurrence_ym,1,4)=?");binds.push(period)}
+  if(scope==="month"&&/^\d{4}-\d{2}$/.test(period)){clauses.push("occurrence_ym=?");binds.push(period)}
+  if(/^\d{4}-\d{2}$/.test(from)){clauses.push("occurrence_ym>=?");binds.push(from)}
+  if(/^\d{4}-\d{2}$/.test(to)){clauses.push("occurrence_ym<=?");binds.push(to)}
   const where=clauses.length?`WHERE ${clauses.join(" AND ")}`:"", offset=(page-1)*limit;
   const cstmt=db.prepare(`SELECT COUNT(*) total FROM music_settlement_records ${where}`); const crow=await (binds.length?cstmt.bind(...binds):cstmt).first();
-  const rows=(await db.prepare(`SELECT id,source_row_no,distributor,source_file,settlement_ym,occurrence_ym,artist,album_title,song_title,original_platform,original_service,platform,original_count,adjusted_count,analysis_count,count_basis,estimate_method,estimate_confidence,settlement_amount,revenue_source,notes FROM music_settlement_records ${where} ORDER BY COALESCE(${timeCol},'0000-00') DESC,id DESC LIMIT ? OFFSET ?`).bind(...binds,limit,offset).all()).results||[];
-  return json({ok:true,basis,rows,total:Number(crow?.total||0),page,limit});
+  const rows=(await db.prepare(`SELECT id,source_row_no,distributor,source_file,settlement_ym,occurrence_ym,artist,album_title,song_title,original_platform,original_service,platform,original_count,adjusted_count,analysis_count,count_basis,estimate_method,estimate_confidence,settlement_amount,revenue_source,notes FROM music_settlement_records ${where} ORDER BY COALESCE(occurrence_ym,'0000-00') DESC,id DESC LIMIT ? OFFSET ?`).bind(...binds,limit,offset).all()).results||[];
+  return json({ok:true,scope,period:scope==="all"?null:period,rows,total:Number(crow?.total||0),page,limit});
 }
 
 export async function onRequestPost({request,env}){

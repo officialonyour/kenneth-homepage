@@ -10,26 +10,71 @@ function seqMonths(endYm, count, offset = 0) {
 }
 function placeholders(n){ return Array.from({length:n},()=>"?").join(","); }
 function pct(cur, prev){ return prev > 0 ? ((cur / prev) - 1) * 100 : null; }
+function safeScope(v){ return v === "year" || v === "month" ? v : "all"; }
+function validYear(v){ return /^\d{4}$/.test(String(v||"")); }
+function validMonth(v){ return /^\d{4}-\d{2}$/.test(String(v||"")); }
 
 export async function onRequestGet({ request, env }) {
   const db = requireDb(env);
   const u = new URL(request.url);
   const view = u.searchParams.get("view") || "overview";
-  const basis = u.searchParams.get("basis") === "settlement" ? "settlement" : "occurrence";
-  const timeCol = basis === "settlement" ? "settlement_ym" : "occurrence_ym";
   const all = async (sql, binds=[]) => (await (binds.length ? db.prepare(sql).bind(...binds) : db.prepare(sql)).all()).results || [];
   const one = async (sql, binds=[]) => (await (binds.length ? db.prepare(sql).bind(...binds) : db.prepare(sql)).first()) || {};
 
+  // Analysis always uses the true music revenue month (settlement month - 3 months).
+  const timeCol = "occurrence_ym";
   const active = await one(`SELECT COUNT(DISTINCT distributor) n FROM music_settlement_records`);
   const activeDistributors = Number(active.n || 0);
-  const complete = activeDistributors ? await one(`SELECT MAX(ym) ym FROM (
+  const globalLatest = await one(`SELECT MAX(${timeCol}) ym FROM music_settlement_records WHERE ${timeCol} IS NOT NULL`);
+  const globalComplete = activeDistributors ? await one(`SELECT MAX(ym) ym FROM (
     SELECT ${timeCol} ym, COUNT(DISTINCT distributor) d FROM music_settlement_records
     WHERE ${timeCol} IS NOT NULL GROUP BY ${timeCol} HAVING d >= ?
   )`, [activeDistributors]) : {};
-  const latest = await one(`SELECT MAX(${timeCol}) ym FROM music_settlement_records WHERE ${timeCol} IS NOT NULL`);
-  const completeYm = complete.ym || latest.ym || null;
-  const recent3 = completeYm ? seqMonths(completeYm, 3) : [];
-  const prev3 = completeYm ? seqMonths(completeYm, 3, 3) : [];
+
+  let scope = safeScope(u.searchParams.get("scope"));
+  let period = String(u.searchParams.get("period") || "").trim();
+  const fallbackMonth = globalComplete.ym || globalLatest.ym || null;
+  if (scope === "year" && !validYear(period)) period = fallbackMonth ? fallbackMonth.slice(0,4) : "";
+  if (scope === "month" && !validMonth(period)) period = fallbackMonth || "";
+  if (scope === "year" && !period) scope = "all";
+  if (scope === "month" && !period) scope = "all";
+
+  const scopeWhere = scope === "year"
+    ? `substr(${timeCol},1,4)='${period}'`
+    : scope === "month"
+      ? `${timeCol}='${period}'`
+      : "1=1";
+  const source = `(SELECT * FROM music_settlement_records WHERE ${scopeWhere})`;
+
+  const selectedLatest = await one(`SELECT MAX(${timeCol}) ym FROM ${source} WHERE ${timeCol} IS NOT NULL`);
+  const selectedComplete = activeDistributors ? await one(`SELECT MAX(ym) ym FROM (
+    SELECT ${timeCol} ym, COUNT(DISTINCT distributor) d FROM ${source}
+    WHERE ${timeCol} IS NOT NULL GROUP BY ${timeCol} HAVING d >= ?
+  )`, [activeDistributors]) : {};
+  const latestYm = selectedLatest.ym || null;
+  const completeYm = selectedComplete.ym || null;
+  const anchorYm = scope === "month" ? period : (completeYm || latestYm || fallbackMonth);
+  const currentWindow = anchorYm ? (scope === "month" ? [anchorYm] : seqMonths(anchorYm,3)) : [];
+  const previousWindow = anchorYm ? (scope === "month" ? [monthShift(anchorYm,-1)] : seqMonths(anchorYm,3,3)) : [];
+
+  const contextWhere = scope === "month" && validMonth(period)
+    ? `${timeCol}>='${monthShift(period,-11)}' AND ${timeCol}<='${period}'`
+    : scope === "year"
+      ? `substr(${timeCol},1,4)='${period}'`
+      : "1=1";
+  const contextSource = `(SELECT * FROM music_settlement_records WHERE ${contextWhere})`;
+
+  const responseBase = {
+    ok:true,
+    basis:"occurrence",
+    scope,
+    period:scope === "all" ? null : period,
+    latestYm,
+    completeYm,
+    currentWindow,
+    previousWindow,
+    comparisonMode: scope === "month" ? "month" : "three_month"
+  };
 
   if (view === "overview") {
     const totals = await one(`SELECT COUNT(*) rows_count, COUNT(DISTINCT song_title) tracks_count,
@@ -41,64 +86,72 @@ export async function onRequestGet({ request, env }) {
       SUM(CASE WHEN count_basis='zero_adjusted' THEN 1 ELSE 0 END) zero_adjusted_rows,
       SUM(CASE WHEN count_basis='estimated' THEN 1 ELSE 0 END) estimated_rows,
       SUM(CASE WHEN count_basis='missing' THEN 1 ELSE 0 END) missing_rows
-      FROM music_settlement_records`);
+      FROM ${source}`);
 
     let recent = {revenue:0, prev_revenue:0, complete_revenue:0, previous_month_revenue:0};
-    if (recent3.length) {
-      const vals = await one(`SELECT
-        COALESCE(SUM(CASE WHEN ${timeCol} IN (${placeholders(recent3.length)}) THEN settlement_amount ELSE 0 END),0) revenue,
-        COALESCE(SUM(CASE WHEN ${timeCol} IN (${placeholders(prev3.length)}) THEN settlement_amount ELSE 0 END),0) prev_revenue,
+    if (currentWindow.length && previousWindow.length) {
+      recent = await one(`SELECT
+        COALESCE(SUM(CASE WHEN ${timeCol} IN (${placeholders(currentWindow.length)}) THEN settlement_amount ELSE 0 END),0) revenue,
+        COALESCE(SUM(CASE WHEN ${timeCol} IN (${placeholders(previousWindow.length)}) THEN settlement_amount ELSE 0 END),0) prev_revenue,
         COALESCE(SUM(CASE WHEN ${timeCol}=? THEN settlement_amount ELSE 0 END),0) complete_revenue,
         COALESCE(SUM(CASE WHEN ${timeCol}=? THEN settlement_amount ELSE 0 END),0) previous_month_revenue
-        FROM music_settlement_records`, [...recent3, ...prev3, completeYm, monthShift(completeYm,-1)]);
-      recent = vals;
+        FROM music_settlement_records`, [...currentWindow, ...previousWindow, anchorYm, monthShift(anchorYm,-1)]);
     }
 
-    const monthly = (await all(`SELECT ${timeCol} ym, COALESCE(SUM(settlement_amount),0) revenue,
-      COALESCE(SUM(CASE WHEN original_count>0 THEN original_count ELSE 0 END),0) actual_count,
-      COALESCE(SUM(CASE WHEN analysis_count>0 THEN analysis_count ELSE 0 END),0) analysis_count,
-      COUNT(DISTINCT distributor) distributor_count, COUNT(DISTINCT song_title) track_count
-      FROM music_settlement_records WHERE ${timeCol} IS NOT NULL GROUP BY ${timeCol} ORDER BY ${timeCol} DESC LIMIT 30`)).reverse();
+    let monthly;
+    if (scope === "all") {
+      monthly = (await all(`SELECT ${timeCol} ym, COALESCE(SUM(settlement_amount),0) revenue,
+        COALESCE(SUM(CASE WHEN original_count>0 THEN original_count ELSE 0 END),0) actual_count,
+        COALESCE(SUM(CASE WHEN analysis_count>0 THEN analysis_count ELSE 0 END),0) analysis_count,
+        COUNT(DISTINCT distributor) distributor_count, COUNT(DISTINCT song_title) track_count
+        FROM music_settlement_records WHERE ${timeCol} IS NOT NULL GROUP BY ${timeCol} ORDER BY ${timeCol} DESC LIMIT 30`)).reverse();
+    } else {
+      monthly = await all(`SELECT ${timeCol} ym, COALESCE(SUM(settlement_amount),0) revenue,
+        COALESCE(SUM(CASE WHEN original_count>0 THEN original_count ELSE 0 END),0) actual_count,
+        COALESCE(SUM(CASE WHEN analysis_count>0 THEN analysis_count ELSE 0 END),0) analysis_count,
+        COUNT(DISTINCT distributor) distributor_count, COUNT(DISTINCT song_title) track_count
+        FROM ${contextSource} WHERE ${timeCol} IS NOT NULL GROUP BY ${timeCol} ORDER BY ${timeCol}`);
+    }
 
     const topTracks = await all(`SELECT song_title, COALESCE(SUM(settlement_amount),0) revenue
-      FROM music_settlement_records GROUP BY song_title ORDER BY revenue DESC LIMIT 8`);
+      FROM ${source} GROUP BY song_title ORDER BY revenue DESC LIMIT 8`);
     const topPlatforms = await all(`SELECT platform, COALESCE(SUM(settlement_amount),0) revenue,
       COALESCE(SUM(CASE WHEN original_count>0 THEN original_count ELSE 0 END),0) actual_count
-      FROM music_settlement_records GROUP BY platform ORDER BY revenue DESC LIMIT 8`);
+      FROM ${source} GROUP BY platform ORDER BY revenue DESC LIMIT 8`);
     const coverage = await all(`SELECT distributor, COUNT(*) rows_count, COALESCE(SUM(settlement_amount),0) revenue,
       MAX(occurrence_ym) latest_occurrence, MAX(settlement_ym) latest_settlement,
       SUM(CASE WHEN count_basis='actual' THEN 1 ELSE 0 END) actual_rows,
       SUM(CASE WHEN count_basis='estimated' THEN 1 ELSE 0 END) estimated_rows,
       SUM(CASE WHEN count_basis='zero_adjusted' THEN 1 ELSE 0 END) zero_adjusted_rows
-      FROM music_settlement_records GROUP BY distributor ORDER BY revenue DESC`);
+      FROM ${source} GROUP BY distributor ORDER BY revenue DESC`);
 
     let trackMomentum=[], platformMomentum=[];
-    if (recent3.length) {
-      const binds=[...recent3,...prev3];
+    if (currentWindow.length && previousWindow.length) {
+      const binds=[...currentWindow,...previousWindow];
       trackMomentum = await all(`SELECT song_title,
-        SUM(CASE WHEN ${timeCol} IN (${placeholders(recent3.length)}) THEN settlement_amount ELSE 0 END) current_revenue,
-        SUM(CASE WHEN ${timeCol} IN (${placeholders(prev3.length)}) THEN settlement_amount ELSE 0 END) previous_revenue
+        SUM(CASE WHEN ${timeCol} IN (${placeholders(currentWindow.length)}) THEN settlement_amount ELSE 0 END) current_revenue,
+        SUM(CASE WHEN ${timeCol} IN (${placeholders(previousWindow.length)}) THEN settlement_amount ELSE 0 END) previous_revenue
         FROM music_settlement_records GROUP BY song_title HAVING current_revenue>0 OR previous_revenue>0`, binds);
       platformMomentum = await all(`SELECT platform,
-        SUM(CASE WHEN ${timeCol} IN (${placeholders(recent3.length)}) THEN settlement_amount ELSE 0 END) current_revenue,
-        SUM(CASE WHEN ${timeCol} IN (${placeholders(prev3.length)}) THEN settlement_amount ELSE 0 END) previous_revenue
+        SUM(CASE WHEN ${timeCol} IN (${placeholders(currentWindow.length)}) THEN settlement_amount ELSE 0 END) current_revenue,
+        SUM(CASE WHEN ${timeCol} IN (${placeholders(previousWindow.length)}) THEN settlement_amount ELSE 0 END) previous_revenue
         FROM music_settlement_records GROUP BY platform HAVING current_revenue>0 OR previous_revenue>0`, binds);
       trackMomentum = trackMomentum.map(x=>({...x,delta:Number(x.current_revenue||0)-Number(x.previous_revenue||0),growth_pct:pct(Number(x.current_revenue||0),Number(x.previous_revenue||0))})).sort((a,b)=>b.delta-a.delta).slice(0,8);
       platformMomentum = platformMomentum.map(x=>({...x,delta:Number(x.current_revenue||0)-Number(x.previous_revenue||0),growth_pct:pct(Number(x.current_revenue||0),Number(x.previous_revenue||0))})).sort((a,b)=>b.delta-a.delta).slice(0,8);
     }
 
-    const concentration = await one(`WITH p AS (SELECT platform, SUM(settlement_amount) r FROM music_settlement_records GROUP BY platform ORDER BY r DESC LIMIT 4),
-      t AS (SELECT song_title, SUM(settlement_amount) r FROM music_settlement_records GROUP BY song_title ORDER BY r DESC LIMIT 10),
-      a AS (SELECT SUM(settlement_amount) r FROM music_settlement_records)
+    const concentration = await one(`WITH scoped AS (SELECT * FROM music_settlement_records WHERE ${scopeWhere}),
+      p AS (SELECT platform, SUM(settlement_amount) r FROM scoped GROUP BY platform ORDER BY r DESC LIMIT 4),
+      t AS (SELECT song_title, SUM(settlement_amount) r FROM scoped GROUP BY song_title ORDER BY r DESC LIMIT 10),
+      a AS (SELECT SUM(settlement_amount) r FROM scoped)
       SELECT COALESCE((SELECT SUM(r) FROM p),0) platform_top4, COALESCE((SELECT SUM(r) FROM t),0) track_top10, COALESCE((SELECT r FROM a),0) total`);
 
-    return json({ok:true,basis,latestYm:latest.ym||null,completeYm,recent3,prev3,totals,recent:{...recent,growth_pct:pct(Number(recent.revenue||0),Number(recent.prev_revenue||0)),mom_pct:pct(Number(recent.complete_revenue||0),Number(recent.previous_month_revenue||0))},monthly,topTracks,topPlatforms,coverage,trackMomentum,platformMomentum,concentration});
+    return json({...responseBase,totals,recent:{...recent,growth_pct:pct(Number(recent.revenue||0),Number(recent.prev_revenue||0)),mom_pct:pct(Number(recent.complete_revenue||0),Number(recent.previous_month_revenue||0))},monthly,topTracks,topPlatforms,coverage,trackMomentum,platformMomentum,concentration});
   }
 
   if (view === "platforms") {
-    const total = await one(`SELECT COALESCE(SUM(settlement_amount),0) revenue FROM music_settlement_records`);
-    const binds = [...recent3, ...prev3];
-    const rows = await all(`SELECT platform,
+    const total = await one(`SELECT COALESCE(SUM(settlement_amount),0) revenue FROM ${source}`);
+    const baseRows = await all(`SELECT platform,
       COALESCE(SUM(settlement_amount),0) revenue,
       COUNT(*) rows_count, COUNT(DISTINCT song_title) tracks_count,
       COALESCE(SUM(CASE WHEN original_count>0 THEN original_count ELSE 0 END),0) actual_count,
@@ -106,14 +159,19 @@ export async function onRequestGet({ request, env }) {
       COALESCE(SUM(CASE WHEN analysis_count>0 THEN analysis_count ELSE 0 END),0) analysis_count,
       SUM(CASE WHEN count_basis='zero_adjusted' THEN 1 ELSE 0 END) zero_adjusted_rows,
       SUM(CASE WHEN count_basis='estimated' THEN 1 ELSE 0 END) estimated_rows,
-      MAX(${timeCol}) latest_month,
-      ${recent3.length ? `SUM(CASE WHEN ${timeCol} IN (${placeholders(recent3.length)}) THEN settlement_amount ELSE 0 END)` : '0'} current_revenue,
-      ${prev3.length ? `SUM(CASE WHEN ${timeCol} IN (${placeholders(prev3.length)}) THEN settlement_amount ELSE 0 END)` : '0'} previous_revenue
-      FROM music_settlement_records GROUP BY platform ORDER BY revenue DESC`, binds);
-    const out=rows.map(x=>{const ar=Number(x.actual_revenue||0), ac=Number(x.actual_count||0), cur=Number(x.current_revenue||0), prev=Number(x.previous_revenue||0);return {...x,share_pct:Number(total.revenue||0)>0?Number(x.revenue||0)/Number(total.revenue)*100:0,rpm_actual:ac>0?ar/ac*1000:null,delta:cur-prev,growth_pct:pct(cur,prev)};});
-    return json({ok:true,basis,completeYm,recent3,prev3,rows:out});
+      MAX(${timeCol}) latest_month
+      FROM ${source} GROUP BY platform ORDER BY revenue DESC`);
+    let momentum=[];
+    if(currentWindow.length && previousWindow.length){
+      momentum=await all(`SELECT platform,
+        SUM(CASE WHEN ${timeCol} IN (${placeholders(currentWindow.length)}) THEN settlement_amount ELSE 0 END) current_revenue,
+        SUM(CASE WHEN ${timeCol} IN (${placeholders(previousWindow.length)}) THEN settlement_amount ELSE 0 END) previous_revenue
+        FROM music_settlement_records GROUP BY platform`,[...currentWindow,...previousWindow]);
+    }
+    const mm=new Map(momentum.map(x=>[x.platform,x]));
+    const out=baseRows.map(x=>{const m=mm.get(x.platform)||{}, ar=Number(x.actual_revenue||0), ac=Number(x.actual_count||0), cur=Number(m.current_revenue||0), prev=Number(m.previous_revenue||0);return {...x,current_revenue:cur,previous_revenue:prev,share_pct:Number(total.revenue||0)>0?Number(x.revenue||0)/Number(total.revenue)*100:0,rpm_actual:ac>0?ar/ac*1000:null,delta:cur-prev,growth_pct:pct(cur,prev)};});
+    return json({...responseBase,rows:out});
   }
-
 
   if (view === "track-detail") {
     const song = String(u.searchParams.get("song") || "").trim();
@@ -131,24 +189,23 @@ export async function onRequestGet({ request, env }) {
       SUM(CASE WHEN count_basis='zero_adjusted' THEN 1 ELSE 0 END) zero_adjusted_rows,
       SUM(CASE WHEN count_basis='estimated' THEN 1 ELSE 0 END) estimated_rows,
       SUM(CASE WHEN count_basis='missing' THEN 1 ELSE 0 END) missing_rows
-      FROM music_settlement_records WHERE song_title=? GROUP BY song_title`, [song]);
-    if (!summary.song_title) return json({ok:false,error:"track_not_found"},404);
+      FROM ${source} WHERE song_title=?`, [song]);
 
-    const recent12 = completeYm ? seqMonths(completeYm,12) : [];
-    const currentYear = completeYm ? completeYm.slice(0,4) : null;
-    const previousYear = currentYear ? String(Number(currentYear)-1) : null;
-    const currentMonthNo = completeYm ? Number(completeYm.slice(5,7)) : null;
-    let recent = {recent3_revenue:0,prev3_revenue:0,recent12_revenue:0,ytd_revenue:0,prev_ytd_revenue:0,complete_revenue:0,previous_month_revenue:0};
-    if (completeYm) {
+    const currentYear=anchorYm?anchorYm.slice(0,4):null;
+    const previousYear=currentYear?String(Number(currentYear)-1):null;
+    const currentMonthNo=anchorYm?Number(anchorYm.slice(5,7)):null;
+    const recent12=anchorYm?seqMonths(anchorYm,12):[];
+    let recent={recent3_revenue:0,prev3_revenue:0,recent12_revenue:0,ytd_revenue:0,prev_ytd_revenue:0,complete_revenue:0,previous_month_revenue:0};
+    if(anchorYm&&currentWindow.length&&previousWindow.length&&recent12.length){
       recent=await one(`SELECT
-        COALESCE(SUM(CASE WHEN ${timeCol} IN (${placeholders(recent3.length)}) THEN settlement_amount ELSE 0 END),0) recent3_revenue,
-        COALESCE(SUM(CASE WHEN ${timeCol} IN (${placeholders(prev3.length)}) THEN settlement_amount ELSE 0 END),0) prev3_revenue,
+        COALESCE(SUM(CASE WHEN ${timeCol} IN (${placeholders(currentWindow.length)}) THEN settlement_amount ELSE 0 END),0) recent3_revenue,
+        COALESCE(SUM(CASE WHEN ${timeCol} IN (${placeholders(previousWindow.length)}) THEN settlement_amount ELSE 0 END),0) prev3_revenue,
         COALESCE(SUM(CASE WHEN ${timeCol} IN (${placeholders(recent12.length)}) THEN settlement_amount ELSE 0 END),0) recent12_revenue,
         COALESCE(SUM(CASE WHEN substr(${timeCol},1,4)=? AND CAST(substr(${timeCol},6,2) AS INTEGER)<=? THEN settlement_amount ELSE 0 END),0) ytd_revenue,
         COALESCE(SUM(CASE WHEN substr(${timeCol},1,4)=? AND CAST(substr(${timeCol},6,2) AS INTEGER)<=? THEN settlement_amount ELSE 0 END),0) prev_ytd_revenue,
         COALESCE(SUM(CASE WHEN ${timeCol}=? THEN settlement_amount ELSE 0 END),0) complete_revenue,
         COALESCE(SUM(CASE WHEN ${timeCol}=? THEN settlement_amount ELSE 0 END),0) previous_month_revenue
-        FROM music_settlement_records WHERE song_title=?`, [...recent3,...prev3,...recent12,currentYear,currentMonthNo,previousYear,currentMonthNo,completeYm,monthShift(completeYm,-1),song]);
+        FROM music_settlement_records WHERE song_title=?`, [...currentWindow,...previousWindow,...recent12,currentYear,currentMonthNo,previousYear,currentMonthNo,anchorYm,monthShift(anchorYm,-1),song]);
     }
     recent.recent3_growth_pct=pct(Number(recent.recent3_revenue||0),Number(recent.prev3_revenue||0));
     recent.ytd_yoy_pct=pct(Number(recent.ytd_revenue||0),Number(recent.prev_ytd_revenue||0));
@@ -159,10 +216,11 @@ export async function onRequestGet({ request, env }) {
       COUNT(DISTINCT platform) platforms_count, COUNT(DISTINCT distributor) distributors_count,
       COALESCE(SUM(CASE WHEN original_count>0 THEN original_count ELSE 0 END),0) actual_count,
       COALESCE(SUM(CASE WHEN analysis_count>0 THEN analysis_count ELSE 0 END),0) analysis_count
-      FROM music_settlement_records WHERE song_title=? AND ${timeCol} IS NOT NULL
+      FROM ${contextSource} WHERE song_title=? AND ${timeCol} IS NOT NULL
       GROUP BY ${timeCol} ORDER BY ${timeCol}`, [song]);
     const monthlyOut=monthly.map((x,i)=>({...x,previous_revenue:i?Number(monthly[i-1].revenue||0):0,mom_pct:i?pct(Number(x.revenue||0),Number(monthly[i-1].revenue||0)):null}));
 
+    // Keep the annual trend as full-history context even when a year/month filter is selected.
     const yearly = await all(`SELECT substr(${timeCol},1,4) year,
       COALESCE(SUM(settlement_amount),0) revenue, COUNT(*) rows_count,
       COUNT(DISTINCT ${timeCol}) active_months, COUNT(DISTINCT platform) platforms_count,
@@ -171,47 +229,57 @@ export async function onRequestGet({ request, env }) {
       FROM music_settlement_records WHERE song_title=? AND ${timeCol} IS NOT NULL
       GROUP BY substr(${timeCol},1,4) ORDER BY year`, [song]);
 
-    const platformBinds=[...recent3,...prev3,song];
-    const platformRows=await all(`SELECT platform,
+    const platformBase=await all(`SELECT platform,
       COALESCE(SUM(settlement_amount),0) revenue, COUNT(*) rows_count,
       GROUP_CONCAT(DISTINCT distributor) distributors,
       COALESCE(SUM(CASE WHEN original_count>0 THEN original_count ELSE 0 END),0) actual_count,
       COALESCE(SUM(CASE WHEN original_count>0 THEN settlement_amount ELSE 0 END),0) actual_revenue,
       COALESCE(SUM(CASE WHEN analysis_count>0 THEN analysis_count ELSE 0 END),0) analysis_count,
-      MAX(${timeCol}) latest_month,
-      ${recent3.length ? `SUM(CASE WHEN ${timeCol} IN (${placeholders(recent3.length)}) THEN settlement_amount ELSE 0 END)` : '0'} current_revenue,
-      ${prev3.length ? `SUM(CASE WHEN ${timeCol} IN (${placeholders(prev3.length)}) THEN settlement_amount ELSE 0 END)` : '0'} previous_revenue
-      FROM music_settlement_records WHERE song_title=? GROUP BY platform ORDER BY revenue DESC`, platformBinds);
+      MAX(${timeCol}) latest_month
+      FROM ${source} WHERE song_title=? GROUP BY platform ORDER BY revenue DESC`,[song]);
+    let platformMomentum=[];
+    if(currentWindow.length&&previousWindow.length){
+      platformMomentum=await all(`SELECT platform,
+        SUM(CASE WHEN ${timeCol} IN (${placeholders(currentWindow.length)}) THEN settlement_amount ELSE 0 END) current_revenue,
+        SUM(CASE WHEN ${timeCol} IN (${placeholders(previousWindow.length)}) THEN settlement_amount ELSE 0 END) previous_revenue
+        FROM music_settlement_records WHERE song_title=? GROUP BY platform`,[...currentWindow,...previousWindow,song]);
+    }
+    const pmm=new Map(platformMomentum.map(x=>[x.platform,x]));
     const totalRevenue=Number(summary.revenue||0);
-    const platforms=platformRows.map(x=>{const cur=Number(x.current_revenue||0),prev=Number(x.previous_revenue||0),ac=Number(x.actual_count||0),ar=Number(x.actual_revenue||0);return {...x,share_pct:totalRevenue>0?Number(x.revenue||0)/totalRevenue*100:0,delta:cur-prev,growth_pct:pct(cur,prev),rpm_actual:ac>0?ar/ac*1000:null};});
+    const platforms=platformBase.map(x=>{const m=pmm.get(x.platform)||{},cur=Number(m.current_revenue||0),prev=Number(m.previous_revenue||0),ac=Number(x.actual_count||0),ar=Number(x.actual_revenue||0);return {...x,current_revenue:cur,previous_revenue:prev,share_pct:totalRevenue>0?Number(x.revenue||0)/totalRevenue*100:0,delta:cur-prev,growth_pct:pct(cur,prev),rpm_actual:ac>0?ar/ac*1000:null};});
 
     const platformMonthly=await all(`SELECT ${timeCol} ym, platform, COALESCE(SUM(settlement_amount),0) revenue
-      FROM music_settlement_records WHERE song_title=? AND ${timeCol} IS NOT NULL
+      FROM ${contextSource} WHERE song_title=? AND ${timeCol} IS NOT NULL
       GROUP BY ${timeCol}, platform ORDER BY ${timeCol}, revenue DESC`, [song]);
 
     const distributorRows=await all(`SELECT distributor, COALESCE(SUM(settlement_amount),0) revenue,
       COUNT(*) rows_count, COUNT(DISTINCT platform) platforms_count, MAX(${timeCol}) latest_month
-      FROM music_settlement_records WHERE song_title=? GROUP BY distributor ORDER BY revenue DESC`, [song]);
+      FROM ${source} WHERE song_title=? GROUP BY distributor ORDER BY revenue DESC`, [song]);
     const distributors=distributorRows.map(x=>({...x,share_pct:totalRevenue>0?Number(x.revenue||0)/totalRevenue*100:0}));
 
-    return json({ok:true,basis,completeYm,recent3,prev3,summary,recent,monthly:monthlyOut,yearly,platforms,platformMonthly,distributors});
+    return json({...responseBase,summary,recent,monthly:monthlyOut,yearly,platforms,platformMonthly,distributors});
   }
 
   if (view === "tracks") {
-    const binds = [...recent3, ...prev3];
-    const rows = await all(`SELECT song_title, GROUP_CONCAT(DISTINCT artist) artists, GROUP_CONCAT(DISTINCT album_title) albums,
+    const baseRows = await all(`SELECT song_title, GROUP_CONCAT(DISTINCT artist) artists, GROUP_CONCAT(DISTINCT album_title) albums,
       COALESCE(SUM(settlement_amount),0) revenue, COUNT(*) rows_count, COUNT(DISTINCT ${timeCol}) active_months,
       COUNT(DISTINCT platform) platforms_count, COUNT(DISTINCT distributor) distributors_count,
       COALESCE(SUM(CASE WHEN original_count>0 THEN original_count ELSE 0 END),0) actual_count,
       COALESCE(SUM(CASE WHEN analysis_count>0 THEN analysis_count ELSE 0 END),0) analysis_count,
       SUM(CASE WHEN count_basis='zero_adjusted' THEN 1 ELSE 0 END) zero_adjusted_rows,
       SUM(CASE WHEN count_basis='estimated' THEN 1 ELSE 0 END) estimated_rows,
-      MAX(${timeCol}) latest_month,
-      ${recent3.length ? `SUM(CASE WHEN ${timeCol} IN (${placeholders(recent3.length)}) THEN settlement_amount ELSE 0 END)` : '0'} current_revenue,
-      ${prev3.length ? `SUM(CASE WHEN ${timeCol} IN (${placeholders(prev3.length)}) THEN settlement_amount ELSE 0 END)` : '0'} previous_revenue
-      FROM music_settlement_records GROUP BY song_title ORDER BY revenue DESC`, binds);
-    const out=rows.map(x=>{const cur=Number(x.current_revenue||0),prev=Number(x.previous_revenue||0);return {...x,delta:cur-prev,growth_pct:pct(cur,prev)};});
-    return json({ok:true,basis,completeYm,recent3,prev3,rows:out});
+      MAX(${timeCol}) latest_month
+      FROM ${source} GROUP BY song_title ORDER BY revenue DESC`);
+    let momentum=[];
+    if(currentWindow.length&&previousWindow.length){
+      momentum=await all(`SELECT song_title,
+        SUM(CASE WHEN ${timeCol} IN (${placeholders(currentWindow.length)}) THEN settlement_amount ELSE 0 END) current_revenue,
+        SUM(CASE WHEN ${timeCol} IN (${placeholders(previousWindow.length)}) THEN settlement_amount ELSE 0 END) previous_revenue
+        FROM music_settlement_records GROUP BY song_title`,[...currentWindow,...previousWindow]);
+    }
+    const mm=new Map(momentum.map(x=>[x.song_title,x]));
+    const out=baseRows.map(x=>{const m=mm.get(x.song_title)||{},cur=Number(m.current_revenue||0),prev=Number(m.previous_revenue||0);return {...x,current_revenue:cur,previous_revenue:prev,delta:cur-prev,growth_pct:pct(cur,prev)};});
+    return json({...responseBase,rows:out});
   }
 
   if (view === "months") {
@@ -222,13 +290,13 @@ export async function onRequestGet({ request, env }) {
       SUM(CASE WHEN count_basis='actual' THEN 1 ELSE 0 END) actual_rows,
       SUM(CASE WHEN count_basis='zero_adjusted' THEN 1 ELSE 0 END) zero_adjusted_rows,
       SUM(CASE WHEN count_basis='estimated' THEN 1 ELSE 0 END) estimated_rows
-      FROM music_settlement_records WHERE ${timeCol} IS NOT NULL GROUP BY ${timeCol} ORDER BY ${timeCol}`);
+      FROM ${contextSource} WHERE ${timeCol} IS NOT NULL GROUP BY ${timeCol} ORDER BY ${timeCol}`);
     const out=rows.map((x,i)=>({...x,complete:Number(x.distributors_count||0)>=activeDistributors,mom_pct:i?pct(Number(x.revenue||0),Number(rows[i-1].revenue||0)):null}));
-    return json({ok:true,basis,activeDistributors,completeYm,rows:out});
+    return json({...responseBase,activeDistributors,rows:out});
   }
 
   if (view === "distributors") {
-    const total=await one(`SELECT COALESCE(SUM(settlement_amount),0) revenue FROM music_settlement_records`);
+    const total=await one(`SELECT COALESCE(SUM(settlement_amount),0) revenue FROM ${source}`);
     const rows=await all(`SELECT distributor, COALESCE(SUM(settlement_amount),0) revenue, COUNT(*) rows_count,
       COUNT(DISTINCT song_title) tracks_count, COUNT(DISTINCT platform) platforms_count,
       MAX(occurrence_ym) latest_occurrence, MAX(settlement_ym) latest_settlement,
@@ -237,8 +305,8 @@ export async function onRequestGet({ request, env }) {
       SUM(CASE WHEN count_basis='estimated' THEN 1 ELSE 0 END) estimated_rows,
       SUM(CASE WHEN count_basis='missing' THEN 1 ELSE 0 END) missing_rows,
       COALESCE(SUM(CASE WHEN original_count>0 THEN original_count ELSE 0 END),0) actual_count
-      FROM music_settlement_records GROUP BY distributor ORDER BY revenue DESC`);
-    return json({ok:true,rows:rows.map(x=>({...x,share_pct:Number(total.revenue||0)>0?Number(x.revenue||0)/Number(total.revenue)*100:0,count_actual_row_pct:Number(x.rows_count||0)>0?Number(x.actual_rows||0)/Number(x.rows_count)*100:0}))});
+      FROM ${source} GROUP BY distributor ORDER BY revenue DESC`);
+    return json({...responseBase,rows:rows.map(x=>({...x,share_pct:Number(total.revenue||0)>0?Number(x.revenue||0)/Number(total.revenue)*100:0,count_actual_row_pct:Number(x.rows_count||0)>0?Number(x.actual_rows||0)/Number(x.rows_count)*100:0}))});
   }
 
   if (view === "quality") {
