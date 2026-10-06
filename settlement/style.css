@@ -686,3 +686,42 @@ body{background:var(--bg)}
     font-size:10.5px !important;
   }
 }
+
+/* ===== Equal Period Tabs V13 ===== */
+@media (max-width:760px){
+
+  #periodControl{
+    display:grid !important;
+    grid-template-columns:repeat(3,minmax(0,1fr)) !important;
+    gap:2px !important;
+
+    width:auto !important;
+    min-width:0 !important;
+
+    padding:3px !important;
+  }
+
+  #periodControl button{
+    width:100% !important;
+    min-width:0 !important;
+
+    height:34px !important;
+
+    padding:0 3px !important;
+
+    font-size:10px !important;
+    letter-spacing:-.03em !important;
+
+    white-space:nowrap !important;
+    word-break:keep-all !important;
+  }
+}
+
+@media (max-width:390px){
+
+  #periodControl button{
+    padding-left:2px !important;
+    padding-right:2px !important;
+    font-size:9.5px !important;
+  }
+}
