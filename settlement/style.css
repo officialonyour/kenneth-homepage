@@ -28,3 +28,122 @@ body{background:var(--bg)}
 .track-detail-view{display:grid;gap:14px}.track-detail-head{display:grid;grid-template-columns:auto minmax(0,1fr) auto;align-items:center;gap:16px;padding:16px 18px}.track-detail-title h2{margin:0;font-size:24px;letter-spacing:-.03em}.track-detail-title p:last-child{margin:5px 0 0}.track-detail-controls{display:flex;align-items:center;gap:10px;justify-content:flex-end;flex-wrap:wrap}.trend-pill{display:inline-flex;align-items:center;border-radius:999px;padding:7px 10px;font-size:11px;font-weight:900;white-space:nowrap}.trend-pill.up{background:#e6f4f1;color:#08796b}.trend-pill.down{background:#fdebed;color:#b13b43}.trend-pill.neutral{background:#eef2f3;color:#68767c}.track-detail-kpis{margin-bottom:0}.track-detail-grid{margin-bottom:0}.annual-bars .bar-row{grid-template-columns:80px minmax(120px,2fr) auto!important}.platform-trend-chart{min-height:340px}.platform-trend-chart svg{width:100%;height:290px;display:block;overflow:visible}.platform-legend{display:flex;gap:14px;align-items:center;flex-wrap:wrap;margin:0 0 10px;font-size:10px;color:#5f6d73}.platform-legend span{display:inline-flex;align-items:center;gap:5px}.legend-dot{width:8px;height:8px;border-radius:50%;display:inline-block}.platform-series{fill:none;stroke-width:2.6;stroke-linecap:round;stroke-linejoin:round}.platform-point{stroke:#fff;stroke-width:1.5}.ps-0{stroke:#08796b;fill:#08796b}.ps-1{stroke:#5f68bd;fill:#5f68bd}.ps-2{stroke:#c9832d;fill:#c9832d}.ps-3{stroke:#a54d72;fill:#a54d72}.ps-4{stroke:#587c8f;fill:#587c8f}.ps-bg-0{background:#08796b}.ps-bg-1{background:#5f68bd}.ps-bg-2{background:#c9832d}.ps-bg-3{background:#a54d72}.ps-bg-4{background:#587c8f}.track-platform-detail{margin-top:0}
 @media(max-width:1050px){.track-detail-head{grid-template-columns:auto 1fr}.track-detail-controls{grid-column:1/-1;justify-content:flex-start}.track-detail-title h2{font-size:21px}}
 @media(max-width:760px){.track-detail-head{grid-template-columns:1fr}.track-detail-head>.btn{justify-self:start}.track-detail-controls{grid-column:auto}.platform-trend-chart svg{height:230px}.track-detail-title h2{font-size:20px}}
+
+/* ===== Mobile Compact Header V7 ===== */
+@media(max-width:760px){
+
+  .main-content{
+    padding-top:14px;
+    padding-left:12px;
+    padding-right:12px;
+  }
+
+  .topbar{
+    display:flex;
+    flex-direction:row;
+    flex-wrap:nowrap;
+    align-items:center;
+    justify-content:space-between;
+    gap:8px;
+    margin-bottom:14px;
+    width:100%;
+  }
+
+  .topbar > div:first-child{
+    flex:0 0 auto;
+    min-width:0;
+  }
+
+  .topbar .eyebrow{
+    display:none;
+  }
+
+  .topbar h1{
+    margin:0;
+    font-size:18px;
+    line-height:1;
+    letter-spacing:-.045em;
+    white-space:nowrap;
+    word-break:keep-all;
+    overflow:visible;
+  }
+
+  .topbar-actions{
+    width:auto;
+    min-width:0;
+    flex:1 1 auto;
+    margin-left:auto;
+    display:flex;
+    flex-direction:row;
+    flex-wrap:nowrap;
+    align-items:center;
+    justify-content:flex-end;
+    gap:6px;
+  }
+
+  .topbar-actions #refreshButton{
+    display:none !important;
+  }
+
+  #basisControl{
+    flex:1 1 auto;
+    width:auto;
+    min-width:0;
+    display:grid;
+    grid-template-columns:repeat(2,minmax(0,1fr));
+    gap:2px;
+    padding:3px;
+    border-radius:10px;
+  }
+
+  #basisControl button{
+    min-width:0;
+    height:34px;
+    padding:0 6px;
+    border-radius:8px;
+    font-size:11px;
+    line-height:1;
+    white-space:nowrap;
+    word-break:keep-all;
+  }
+
+  #openImportButton{
+    flex:0 0 auto;
+    width:auto;
+    height:40px;
+    min-height:40px;
+    padding:0 9px;
+    border-radius:10px;
+    font-size:11px;
+    line-height:1;
+    white-space:nowrap;
+    word-break:keep-all;
+    box-shadow:0 5px 14px rgba(8,121,107,.15);
+  }
+}
+
+@media(max-width:390px){
+
+  .main-content{
+    padding-left:10px;
+    padding-right:10px;
+  }
+
+  .topbar{
+    gap:6px;
+  }
+
+  .topbar h1{
+    font-size:17px;
+  }
+
+  #basisControl button{
+    padding:0 4px;
+    font-size:10px;
+  }
+
+  #openImportButton{
+    padding:0 7px;
+    font-size:10px;
+  }
+}
