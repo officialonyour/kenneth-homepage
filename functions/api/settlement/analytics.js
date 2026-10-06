@@ -114,6 +114,89 @@ export async function onRequestGet({ request, env }) {
     return json({ok:true,basis,completeYm,recent3,prev3,rows:out});
   }
 
+
+  if (view === "track-detail") {
+    const song = String(u.searchParams.get("song") || "").trim();
+    if (!song) return json({ok:false,error:"song_required"},400);
+
+    const summary = await one(`SELECT song_title,
+      GROUP_CONCAT(DISTINCT artist) artists, GROUP_CONCAT(DISTINCT album_title) albums,
+      COALESCE(SUM(settlement_amount),0) revenue, COUNT(*) rows_count,
+      COUNT(DISTINCT ${timeCol}) active_months, COUNT(DISTINCT platform) platforms_count,
+      COUNT(DISTINCT distributor) distributors_count,
+      MIN(${timeCol}) first_month, MAX(${timeCol}) latest_month,
+      COALESCE(SUM(CASE WHEN original_count>0 THEN original_count ELSE 0 END),0) actual_count,
+      COALESCE(SUM(CASE WHEN analysis_count>0 THEN analysis_count ELSE 0 END),0) analysis_count,
+      SUM(CASE WHEN count_basis='actual' THEN 1 ELSE 0 END) actual_rows,
+      SUM(CASE WHEN count_basis='zero_adjusted' THEN 1 ELSE 0 END) zero_adjusted_rows,
+      SUM(CASE WHEN count_basis='estimated' THEN 1 ELSE 0 END) estimated_rows,
+      SUM(CASE WHEN count_basis='missing' THEN 1 ELSE 0 END) missing_rows
+      FROM music_settlement_records WHERE song_title=? GROUP BY song_title`, [song]);
+    if (!summary.song_title) return json({ok:false,error:"track_not_found"},404);
+
+    const recent12 = completeYm ? seqMonths(completeYm,12) : [];
+    const currentYear = completeYm ? completeYm.slice(0,4) : null;
+    const previousYear = currentYear ? String(Number(currentYear)-1) : null;
+    const currentMonthNo = completeYm ? Number(completeYm.slice(5,7)) : null;
+    let recent = {recent3_revenue:0,prev3_revenue:0,recent12_revenue:0,ytd_revenue:0,prev_ytd_revenue:0,complete_revenue:0,previous_month_revenue:0};
+    if (completeYm) {
+      recent=await one(`SELECT
+        COALESCE(SUM(CASE WHEN ${timeCol} IN (${placeholders(recent3.length)}) THEN settlement_amount ELSE 0 END),0) recent3_revenue,
+        COALESCE(SUM(CASE WHEN ${timeCol} IN (${placeholders(prev3.length)}) THEN settlement_amount ELSE 0 END),0) prev3_revenue,
+        COALESCE(SUM(CASE WHEN ${timeCol} IN (${placeholders(recent12.length)}) THEN settlement_amount ELSE 0 END),0) recent12_revenue,
+        COALESCE(SUM(CASE WHEN substr(${timeCol},1,4)=? AND CAST(substr(${timeCol},6,2) AS INTEGER)<=? THEN settlement_amount ELSE 0 END),0) ytd_revenue,
+        COALESCE(SUM(CASE WHEN substr(${timeCol},1,4)=? AND CAST(substr(${timeCol},6,2) AS INTEGER)<=? THEN settlement_amount ELSE 0 END),0) prev_ytd_revenue,
+        COALESCE(SUM(CASE WHEN ${timeCol}=? THEN settlement_amount ELSE 0 END),0) complete_revenue,
+        COALESCE(SUM(CASE WHEN ${timeCol}=? THEN settlement_amount ELSE 0 END),0) previous_month_revenue
+        FROM music_settlement_records WHERE song_title=?`, [...recent3,...prev3,...recent12,currentYear,currentMonthNo,previousYear,currentMonthNo,completeYm,monthShift(completeYm,-1),song]);
+    }
+    recent.recent3_growth_pct=pct(Number(recent.recent3_revenue||0),Number(recent.prev3_revenue||0));
+    recent.ytd_yoy_pct=pct(Number(recent.ytd_revenue||0),Number(recent.prev_ytd_revenue||0));
+    recent.mom_pct=pct(Number(recent.complete_revenue||0),Number(recent.previous_month_revenue||0));
+
+    const monthly = await all(`SELECT ${timeCol} ym,
+      COALESCE(SUM(settlement_amount),0) revenue, COUNT(*) rows_count,
+      COUNT(DISTINCT platform) platforms_count, COUNT(DISTINCT distributor) distributors_count,
+      COALESCE(SUM(CASE WHEN original_count>0 THEN original_count ELSE 0 END),0) actual_count,
+      COALESCE(SUM(CASE WHEN analysis_count>0 THEN analysis_count ELSE 0 END),0) analysis_count
+      FROM music_settlement_records WHERE song_title=? AND ${timeCol} IS NOT NULL
+      GROUP BY ${timeCol} ORDER BY ${timeCol}`, [song]);
+    const monthlyOut=monthly.map((x,i)=>({...x,previous_revenue:i?Number(monthly[i-1].revenue||0):0,mom_pct:i?pct(Number(x.revenue||0),Number(monthly[i-1].revenue||0)):null}));
+
+    const yearly = await all(`SELECT substr(${timeCol},1,4) year,
+      COALESCE(SUM(settlement_amount),0) revenue, COUNT(*) rows_count,
+      COUNT(DISTINCT ${timeCol}) active_months, COUNT(DISTINCT platform) platforms_count,
+      COALESCE(SUM(CASE WHEN original_count>0 THEN original_count ELSE 0 END),0) actual_count,
+      COALESCE(SUM(CASE WHEN analysis_count>0 THEN analysis_count ELSE 0 END),0) analysis_count
+      FROM music_settlement_records WHERE song_title=? AND ${timeCol} IS NOT NULL
+      GROUP BY substr(${timeCol},1,4) ORDER BY year`, [song]);
+
+    const platformBinds=[...recent3,...prev3,song];
+    const platformRows=await all(`SELECT platform,
+      COALESCE(SUM(settlement_amount),0) revenue, COUNT(*) rows_count,
+      GROUP_CONCAT(DISTINCT distributor) distributors,
+      COALESCE(SUM(CASE WHEN original_count>0 THEN original_count ELSE 0 END),0) actual_count,
+      COALESCE(SUM(CASE WHEN original_count>0 THEN settlement_amount ELSE 0 END),0) actual_revenue,
+      COALESCE(SUM(CASE WHEN analysis_count>0 THEN analysis_count ELSE 0 END),0) analysis_count,
+      MAX(${timeCol}) latest_month,
+      ${recent3.length ? `SUM(CASE WHEN ${timeCol} IN (${placeholders(recent3.length)}) THEN settlement_amount ELSE 0 END)` : '0'} current_revenue,
+      ${prev3.length ? `SUM(CASE WHEN ${timeCol} IN (${placeholders(prev3.length)}) THEN settlement_amount ELSE 0 END)` : '0'} previous_revenue
+      FROM music_settlement_records WHERE song_title=? GROUP BY platform ORDER BY revenue DESC`, platformBinds);
+    const totalRevenue=Number(summary.revenue||0);
+    const platforms=platformRows.map(x=>{const cur=Number(x.current_revenue||0),prev=Number(x.previous_revenue||0),ac=Number(x.actual_count||0),ar=Number(x.actual_revenue||0);return {...x,share_pct:totalRevenue>0?Number(x.revenue||0)/totalRevenue*100:0,delta:cur-prev,growth_pct:pct(cur,prev),rpm_actual:ac>0?ar/ac*1000:null};});
+
+    const platformMonthly=await all(`SELECT ${timeCol} ym, platform, COALESCE(SUM(settlement_amount),0) revenue
+      FROM music_settlement_records WHERE song_title=? AND ${timeCol} IS NOT NULL
+      GROUP BY ${timeCol}, platform ORDER BY ${timeCol}, revenue DESC`, [song]);
+
+    const distributorRows=await all(`SELECT distributor, COALESCE(SUM(settlement_amount),0) revenue,
+      COUNT(*) rows_count, COUNT(DISTINCT platform) platforms_count, MAX(${timeCol}) latest_month
+      FROM music_settlement_records WHERE song_title=? GROUP BY distributor ORDER BY revenue DESC`, [song]);
+    const distributors=distributorRows.map(x=>({...x,share_pct:totalRevenue>0?Number(x.revenue||0)/totalRevenue*100:0}));
+
+    return json({ok:true,basis,completeYm,recent3,prev3,summary,recent,monthly:monthlyOut,yearly,platforms,platformMonthly,distributors});
+  }
+
   if (view === "tracks") {
     const binds = [...recent3, ...prev3];
     const rows = await all(`SELECT song_title, GROUP_CONCAT(DISTINCT artist) artists, GROUP_CONCAT(DISTINCT album_title) albums,

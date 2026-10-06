@@ -6,9 +6,9 @@
   <meta name="color-scheme" content="light" />
   <title>케네쓰음원정산관리</title>
   <meta name="description" content="케네쓰 음원 정산 분석 및 모니터링" />
-  <link rel="stylesheet" href="./style.css?v=2" />
+  <link rel="stylesheet" href="./style.css?v=5" />
   <script defer src="./xlsx-local.js?v=4"></script>
-  <script defer src="./app.js?v=4"></script>
+  <script defer src="./app.js?v=5"></script>
 </head>
 <body>
   <div id="toastHost" class="toast-host" aria-live="polite"></div>
@@ -100,8 +100,43 @@
       </section>
 
       <section id="page-tracks" class="page">
-        <div class="toolbar panel compact"><label class="grow">음원 검색<input id="trackSearch" type="search" placeholder="곡명 · 아티스트 · 앨범" /></label><label>정렬<select id="trackSort"><option value="recent">최근 3개월 수익</option><option value="rise">상승폭</option><option value="growth">성장률</option><option value="total">누적수익</option></select></label></div>
-        <article class="panel table-panel"><div class="panel-head"><div><p class="panel-kicker">TRACK INTELLIGENCE</p><h2>음원 성과 분석</h2></div><span id="trackPeriod" class="chip">최근 3개월 vs 직전 3개월</span></div><div class="table-wrap"><table class="data-table"><thead><tr><th>#</th><th>곡명</th><th>아티스트 / 앨범</th><th class="num">누적수익</th><th class="num">최근3M</th><th class="num">상승폭</th><th class="num">성장률</th><th class="num">실제 카운트</th><th class="num">플랫폼</th><th>최근월</th></tr></thead><tbody id="tracksBody"></tbody></table></div></article>
+        <div id="trackListView">
+          <div class="toolbar panel compact"><label class="grow">음원 검색<input id="trackSearch" type="search" placeholder="곡명 · 아티스트 · 앨범" /></label><label>정렬<select id="trackSort"><option value="recent">최근 3개월 수익</option><option value="rise">상승폭</option><option value="growth">성장률</option><option value="total">누적수익</option></select></label></div>
+          <article class="panel table-panel"><div class="panel-head"><div><p class="panel-kicker">TRACK INTELLIGENCE</p><h2>음원 성과 분석</h2><p class="muted compact-note">곡명을 클릭하면 플랫폼별 수익, 월간·연간 추세, 최근 상승/하락을 상세 분석합니다.</p></div><span id="trackPeriod" class="chip">최근 3개월 vs 직전 3개월</span></div><div class="table-wrap"><table class="data-table track-table"><thead><tr><th>#</th><th>곡명</th><th>아티스트 / 앨범</th><th class="num">누적수익</th><th class="num">최근3M</th><th class="num">상승폭</th><th class="num">성장률</th><th class="num">실제 카운트</th><th class="num">플랫폼</th><th>최근월</th><th></th></tr></thead><tbody id="tracksBody"></tbody></table></div></article>
+        </div>
+
+        <div id="trackDetailView" class="hidden track-detail-view">
+          <article class="panel track-detail-head">
+            <button id="trackBackButton" class="btn btn-ghost btn-sm" type="button">← 음원 목록</button>
+            <div class="track-detail-title"><p class="panel-kicker">TRACK DETAIL INTELLIGENCE</p><h2 id="trackDetailTitle">-</h2><p id="trackDetailMeta" class="muted">-</p></div>
+            <div class="track-detail-controls"><span id="trackTrendBadge" class="trend-pill neutral">추세 -</span><div class="segmented" id="trackRangeControl"><button data-range="12">12개월</button><button data-range="24" class="active">24개월</button><button data-range="all">전체</button></div></div>
+          </article>
+
+          <div class="kpi-grid expert track-detail-kpis">
+            <article class="kpi-card"><span>누적 수익</span><strong id="tdRevenue">₩0</strong><em id="tdActivePeriod">-</em></article>
+            <article class="kpi-card"><span>최근 3개월</span><strong id="tdRecent3">₩0</strong><em id="tdRecentGrowth">직전 3개월 대비 -</em></article>
+            <article class="kpi-card"><span>최근 12개월</span><strong id="tdRecent12">₩0</strong><em id="tdRecent12Share">누적 대비 -</em></article>
+            <article class="kpi-card"><span>올해 YTD</span><strong id="tdYtd">₩0</strong><em id="tdYoy">전년 동기간 대비 -</em></article>
+            <article class="kpi-card"><span>카운트</span><strong id="tdActualCount">0</strong><em id="tdAnalysisCount">분석 카운트 0</em></article>
+            <article class="kpi-card"><span>활성 채널</span><strong id="tdPlatforms">0개 플랫폼</strong><em id="tdLatestMonth">최근월 -</em></article>
+          </div>
+
+          <div class="two-col track-detail-grid">
+            <article class="panel"><div class="panel-head"><div><p class="panel-kicker">MONTHLY TREND</p><h2>월간 수익 추이</h2></div><span id="tdMonthlyPeriod" class="chip">최근 24개월</span></div><div id="trackMonthlyTrend" class="svg-chart tall"></div></article>
+            <article class="panel"><div class="panel-head"><div><p class="panel-kicker">ANNUAL TREND</p><h2>연간 수익 추이</h2></div><span class="chip">연도별 누적</span></div><div id="trackYearBars" class="bar-list large annual-bars"></div></article>
+          </div>
+
+          <div class="two-col track-detail-grid">
+            <article class="panel"><div class="panel-head"><div><p class="panel-kicker">PLATFORM MIX</p><h2>플랫폼별 누적 수익</h2></div><span id="tdTopPlatform" class="chip">TOP -</span></div><div id="trackPlatformBars" class="bar-list large"></div></article>
+            <article class="panel"><div class="panel-head"><div><p class="panel-kicker">DISTRIBUTOR MIX</p><h2>유통사별 수익</h2></div></div><div id="trackDistributorBars" class="bar-list large"></div></article>
+          </div>
+
+          <article class="panel"><div class="panel-head"><div><p class="panel-kicker">PLATFORM MOMENTUM</p><h2>플랫폼별 월간 추세</h2><p class="muted compact-note">수익 상위 플랫폼의 월별 흐름을 겹쳐서 봅니다. 특정 플랫폼의 상승이 전체 곡 성장을 이끄는지 확인할 수 있습니다.</p></div><span id="tdPlatformTrendPeriod" class="chip">최근 24개월</span></div><div id="trackPlatformTrend" class="platform-trend-chart"></div></article>
+
+          <article class="panel table-panel track-platform-detail"><div class="panel-head"><div><p class="panel-kicker">PLATFORM DETAIL</p><h2>플랫폼별 성과 상세</h2></div><span id="tdPlatformPeriod" class="chip">최근 3개월 vs 직전 3개월</span></div><div class="table-wrap"><table class="data-table"><thead><tr><th>플랫폼</th><th class="num">누적수익</th><th class="num">비중</th><th class="num">최근3M</th><th class="num">증감</th><th class="num">성장률</th><th class="num">실제 카운트</th><th class="num">분석 카운트</th><th class="num">RPM</th><th>최근월</th></tr></thead><tbody id="trackPlatformsBody"></tbody></table></div></article>
+
+          <article class="panel table-panel"><div class="panel-head"><div><p class="panel-kicker">MONTHLY DETAIL</p><h2>월별 상세 내역</h2></div></div><div class="table-wrap"><table class="data-table"><thead><tr><th>월</th><th class="num">수익</th><th class="num">전월비</th><th class="num">실제 카운트</th><th class="num">분석 카운트</th><th class="num">플랫폼</th><th class="num">유통사</th><th class="num">정산행</th></tr></thead><tbody id="trackMonthsBody"></tbody></table></div></article>
+        </div>
       </section>
 
       <section id="page-distributors" class="page"><div id="distributorCards" class="distributor-grid"></div><article class="panel table-panel"><div class="panel-head"><div><p class="panel-kicker">DISTRIBUTOR HEALTH</p><h2>유통사별 데이터 상태</h2></div></div><div class="table-wrap"><table class="data-table"><thead><tr><th>유통사</th><th class="num">누적수익</th><th class="num">비중</th><th class="num">정산건</th><th class="num">음원</th><th class="num">플랫폼</th><th>발생 최신월</th><th>정산 최신월</th><th class="num">실제카운트 행 비율</th></tr></thead><tbody id="distributorsBody"></tbody></table></div></article></section>
