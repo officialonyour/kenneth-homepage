@@ -1,24 +1,28 @@
-KENNETH 모바일 다크 홈페이지
+KENNETH MUSIC SETTLEMENT ANALYTICS V2 / 2026-10-06
 
-적용 파일
-- index.html
-- style.css
-- script.js
-- assets 폴더
+PURPOSE
+- Upgrade /settlement from a simple settlement list to an analytics/monitoring dashboard.
+- Preserve existing kenneth-homepage root files and existing Cloudflare resources/secrets.
+- Use a new full-fidelity D1 table for the detailed workbook schema.
 
-교체 방법
-1. 기존 index.html, style.css, script.js를 이 파일들로 통째로 교체합니다.
-2. assets 폴더는 기존 폴더 위에 덮어씁니다.
-3. GitHub Desktop에서 Commit to main 후 Push origin을 누릅니다.
+WORKBOOK AUDIT TARGET
+- Detailed rows: 8,152
+- Platform mappings: 149
+- Occurrence period: 2016-04 ~ 2026-05
+- Distributors: 3
+- Tracks: 41
+- Normalized platforms: 26
+- Albums: 13
+- Settlement amount total: 196,490.894817798
+- Count quality after V2 rules:
+  actual rows 3,760
+  zero-count adjusted rows 4,267
+  missing-original-count estimated rows 122
+  unresolved rows 3
 
-링크 수정
-- script.js 최상단 SITE_DATA.links에서 수정합니다.
-- SoundCloud와 BeatStars는 현재 빈 값으로 두었습니다.
-- 각 음원 링크는 SITE_DATA.releases 안에서 수정합니다.
-
-디자인 기준
-- 모바일 전용
-- 블랙/차콜 기반
-- 네온 효과 없음
-- 오렌지는 작은 포인트에만 사용
-- 큰 카드와 과한 둥근 모서리를 줄인 컴팩트 구조
+IMPORTANT
+- Do NOT upload the workbook before running migrations/002_settlement_analytics.sql in Cloudflare D1 Console.
+- The workbook's derived summary sheets are not duplicated into D1. They are recalculated from the 8,152 detailed rows, which avoids double counting.
+- The 플랫폼매핑 sheet IS imported as a master mapping table.
+- Existing ADMIN_PASSWORD / SESSION_SECRET are not touched.
+- Settlement auth continues using SETTLEMENT_ADMIN_PASSWORD / SETTLEMENT_SESSION_SECRET.
