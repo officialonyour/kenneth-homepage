@@ -573,3 +573,116 @@ body{background:var(--bg)}
   .main-content{padding-bottom:calc(92px + env(safe-area-inset-bottom,0px)) !important}
   .section-tab{font-size:11px;padding:0 8px}
 }
+
+/* ===== Mobile Period Picker Width V12 ===== */
+@media (max-width:760px){
+
+  /*
+   * Give the year/month picker priority.
+   * Period tabs become slightly narrower.
+   */
+
+  #periodTools{
+    display:flex !important;
+    align-items:center !important;
+    flex-wrap:nowrap !important;
+    gap:6px !important;
+    min-width:0 !important;
+    width:100% !important;
+  }
+
+  #periodControl{
+    flex:1 1 0 !important;
+    width:auto !important;
+    min-width:0 !important;
+    max-width:none !important;
+
+    display:grid !important;
+    grid-template-columns:
+      minmax(0,1.12fr)
+      minmax(0,.82fr)
+      minmax(0,.82fr) !important;
+
+    gap:2px !important;
+    padding:3px !important;
+  }
+
+  #periodControl button{
+    min-width:0 !important;
+    height:34px !important;
+
+    padding:0 3px !important;
+
+    font-size:10px !important;
+    letter-spacing:-.03em !important;
+
+    white-space:nowrap !important;
+    word-break:keep-all !important;
+  }
+
+  .period-picker{
+    flex:0 0 96px !important;
+    width:96px !important;
+    min-width:96px !important;
+    max-width:96px !important;
+
+    height:34px !important;
+
+    padding-left:9px !important;
+    padding-right:27px !important;
+
+    font-size:11px !important;
+    letter-spacing:-.01em !important;
+
+    white-space:nowrap !important;
+  }
+
+  .period-picker.month{
+    flex-basis:112px !important;
+    width:112px !important;
+    min-width:112px !important;
+    max-width:112px !important;
+
+    padding-left:11px !important;
+    padding-right:29px !important;
+
+    font-size:11.5px !important;
+  }
+}
+
+@media (max-width:390px){
+
+  #periodTools{
+    gap:4px !important;
+  }
+
+  #periodControl button{
+    padding-left:2px !important;
+    padding-right:2px !important;
+    font-size:9.5px !important;
+  }
+
+  .period-picker{
+    flex-basis:88px !important;
+    width:88px !important;
+    min-width:88px !important;
+    max-width:88px !important;
+
+    padding-left:7px !important;
+    padding-right:24px !important;
+
+    font-size:10px !important;
+  }
+
+  .period-picker.month{
+    flex-basis:106px !important;
+    width:106px !important;
+    min-width:106px !important;
+    max-width:106px !important;
+
+    padding-left:9px !important;
+    padding-right:27px !important;
+
+    font-size:10.5px !important;
+  }
+}
