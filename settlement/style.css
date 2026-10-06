@@ -147,3 +147,129 @@ body{background:var(--bg)}
     font-size:10px;
   }
 }
+
+/* ===== Mobile Bottom Navigation V8 ===== */
+@media (max-width:760px){
+
+  /*
+   * iPhone Safari:
+   * - keep every menu item on ONE row
+   * - prevent the second row from being hidden behind Safari controls
+   * - allow horizontal swipe when all menu items do not fit
+   */
+
+  .mobile-nav,
+  .bottom-nav,
+  .mobile-bottom-nav,
+  nav.mobile-nav{
+    position:fixed !important;
+    left:0 !important;
+    right:0 !important;
+    bottom:0 !important;
+
+    width:100% !important;
+    height:auto !important;
+    min-height:72px !important;
+    max-height:none !important;
+
+    display:flex !important;
+    flex-direction:row !important;
+    flex-wrap:nowrap !important;
+    align-items:stretch !important;
+    justify-content:flex-start !important;
+
+    gap:4px !important;
+
+    overflow-x:auto !important;
+    overflow-y:hidden !important;
+
+    padding:
+      7px
+      10px
+      max(8px, env(safe-area-inset-bottom))
+      10px !important;
+
+    box-sizing:border-box !important;
+
+    -webkit-overflow-scrolling:touch;
+    overscroll-behavior-x:contain;
+    scrollbar-width:none;
+
+    z-index:9999 !important;
+  }
+
+  .mobile-nav::-webkit-scrollbar,
+  .bottom-nav::-webkit-scrollbar,
+  .mobile-bottom-nav::-webkit-scrollbar{
+    display:none;
+  }
+
+  .mobile-nav > *,
+  .bottom-nav > *,
+  .mobile-bottom-nav > *,
+  nav.mobile-nav > *{
+    flex:0 0 78px !important;
+    width:78px !important;
+    min-width:78px !important;
+    max-width:78px !important;
+
+    min-height:56px !important;
+
+    margin:0 !important;
+    padding:6px 4px !important;
+
+    display:flex !important;
+    flex-direction:column !important;
+    align-items:center !important;
+    justify-content:center !important;
+
+    box-sizing:border-box !important;
+
+    white-space:nowrap !important;
+    word-break:keep-all !important;
+
+    border-radius:14px !important;
+  }
+
+  .mobile-nav a,
+  .bottom-nav a,
+  .mobile-bottom-nav a{
+    text-decoration:none;
+  }
+
+  .mobile-nav span,
+  .bottom-nav span,
+  .mobile-bottom-nav span{
+    white-space:nowrap !important;
+    word-break:keep-all !important;
+  }
+
+  /*
+   * Content must finish ABOVE the fixed navigation.
+   */
+  body{
+    padding-bottom:
+      calc(92px + env(safe-area-inset-bottom)) !important;
+  }
+
+  .main-content{
+    padding-bottom:
+      calc(105px + env(safe-area-inset-bottom)) !important;
+  }
+}
+
+/*
+ * Narrow iPhones
+ */
+@media (max-width:390px){
+
+  .mobile-nav > *,
+  .bottom-nav > *,
+  .mobile-bottom-nav > *,
+  nav.mobile-nav > *{
+    flex-basis:74px !important;
+    width:74px !important;
+    min-width:74px !important;
+    max-width:74px !important;
+  }
+}
