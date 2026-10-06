@@ -71,7 +71,7 @@ export function clearSessionCookie() {
 }
 export async function requestAuthenticated(request, env) {
   const token = parseCookie(request.headers.get("cookie"))[SESSION_COOKIE];
-  return verifySession(env.SESSION_SECRET, token);
+  return verifySession(env.SETTLEMENT_SESSION_SECRET, token);
 }
 export function sameOriginWrite(request) {
   if (["GET", "HEAD", "OPTIONS"].includes(request.method)) return true;

@@ -29,8 +29,8 @@ Cloudflare Dashboard → `kenneth-homepage` → Settings → Variables and Secre
 
 다음 두 값을 **Encrypt/Secret** 으로 등록합니다.
 
-- `ADMIN_PASSWORD`: 정산관리 로그인 비밀번호
-- `SESSION_SECRET`: 충분히 긴 무작위 문자열(최소 32자 권장)
+- `SETTLEMENT_ADMIN_PASSWORD`: 정산관리 로그인 비밀번호
+- `SETTLEMENT_SESSION_SECRET`: 충분히 긴 무작위 문자열(최소 32자 권장)
 
 두 값은 Git에 커밋하지 않습니다.
 
