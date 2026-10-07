@@ -12,10 +12,14 @@
  * are used for tempo refinement, and the envelope runs at about 100 Hz.
  *
  * buildTargets(options) -> [{ target, start, end, bar }]. `bar` is one-based.
- * A target is offset + k * barSeconds, for a non-negative integer k. Targets
- * lie in [rangeStart, rangeEnd], the requested phrase ends within rangeEnd,
- * and the full pre-roll starts at or after zero. Pre-roll may precede rangeStart.
- * lengthBars/preRollBars describe bars AFTER/BEFORE target, respectively.
+ * V3 uses fixed 4/4 time, BPM 40–240, and exactly one complete bar of pre-roll.
+ * A target is offset + k * barSeconds, for a non-negative integer k. Every
+ * target is strictly before duration, and its pre-roll starts at or after zero.
+ * Playback always continues to the full audio duration; the last target may
+ * therefore start in a partial final bar. Missing BPM defaults to 96.
+ * Short audio without a viable target throws a descriptive RangeError.
+ * offset is a first-bar anchor entered/confirmed by the user, not a promise
+ * that an automatically detected onset is the first beat of a musical bar.
  *
  * pickTarget(plans, { lastTarget, weakTargets, random }) -> a plan or null.
  * weakTargets accepts numbers, { target, weight } objects, or a Map/object
@@ -24,7 +28,10 @@
  */
 
 const TWO_PI = 2 * Math.PI;
-const EPSILON = 1e-7;
+const DEFAULT_BPM = 96;
+const MIN_BPM = 40;
+const MAX_BPM = 240;
+const MAX_TARGETS = 100000;
 
 function positiveNumber(value, name) {
   const number = Number(value);
@@ -42,12 +49,23 @@ function clamp(value, minimum, maximum) {
   return Math.min(maximum, Math.max(minimum, value));
 }
 
-export function barSeconds(bpm, beatsPerBar = 4) {
-  return 60 / positiveNumber(bpm, 'BPM') * wholeNumber(beatsPerBar, 'Beats per bar', 1);
+function validBpm(value = DEFAULT_BPM) {
+  const bpm = Number(value);
+  if (!Number.isFinite(bpm) || bpm < MIN_BPM || bpm > MAX_BPM) {
+    throw new RangeError(`BPM must be between ${MIN_BPM} and ${MAX_BPM}.`);
+  }
+  return bpm;
+}
+
+export function barSeconds(bpm = DEFAULT_BPM, beatsPerBar = 4) {
+  if (wholeNumber(beatsPerBar, 'Beats per bar', 1) !== 4) {
+    throw new RangeError('Lyric Trainer uses fixed 4/4 time (four beats per bar).');
+  }
+  return 240 / validBpm(bpm);
 }
 
 export function snapToBeat(time, bpm, offset = 0) {
-  const period = 60 / positiveNumber(bpm, 'BPM');
+  const period = 60 / validBpm(bpm);
   if (!Number.isFinite(Number(time)) || !Number.isFinite(Number(offset))) throw new RangeError('Time and offset must be finite.');
   return Math.max(0, Number(offset) + Math.round((Number(time) - Number(offset)) / period) * period);
 }
@@ -58,28 +76,34 @@ export function snapToBar(time, bpm, beatsPerBar = 4, offset = 0) {
   return Math.max(0, Number(offset) + Math.round((Number(time) - Number(offset)) / period) * period);
 }
 
-export function buildTargets({ duration, bpm, beatsPerBar = 4, offset = 0, rangeStart = 0, rangeEnd = duration, lengthBars = 4, preRollBars = 1 }) {
+export function buildTargets({ duration, bpm = DEFAULT_BPM, beatsPerBar = 4, offset = 0 } = {}) {
   const total = positiveNumber(duration, 'Duration');
   const barLength = barSeconds(bpm, beatsPerBar);
-  const phrase = wholeNumber(lengthBars, 'Phrase bars', 1) * barLength;
-  const lead = wholeNumber(preRollBars, 'Pre-roll bars') * barLength;
   const firstBeat = Number(offset);
-  if (!Number.isFinite(firstBeat) || firstBeat < 0) throw new RangeError('First beat must be at or after zero.');
-  if (!Number.isFinite(Number(rangeStart)) || !Number.isFinite(Number(rangeEnd))) throw new RangeError('Range must be finite.');
-  const from = clamp(Number(rangeStart), 0, total);
-  const until = clamp(Number(rangeEnd), 0, total);
-  if (until <= from || firstBeat > until) return [];
-  const first = Math.max(0, Math.ceil((Math.max(from, lead) - firstBeat - EPSILON) / barLength));
-  const last = Math.floor((until - phrase - firstBeat + EPSILON) / barLength);
-  if (last - first > 100000) throw new RangeError('The requested training range contains too many bars.');
+  if (!Number.isFinite(firstBeat) || firstBeat < 0) throw new RangeError('First bar must be a finite time at or after zero.');
+  if (firstBeat >= total) throw new RangeError('First bar must be before the end of the audio.');
+  // The floor estimate may include one unusable early or final boundary. Check
+  // both against the actual calculated time: an epsilon could admit duration
+  // itself, or incorrectly exclude a legitimate tiny final partial bar.
+  const first = Math.max(0, Math.floor((barLength - firstBeat) / barLength));
+  const last = Math.floor((total - firstBeat) / barLength);
+  if (!Number.isSafeInteger(last) || last - first > MAX_TARGETS + 1) {
+    throw new RangeError('The audio contains too many bars to generate training starts.');
+  }
   const plans = [];
   for (let k = first; k <= last; k += 1) {
     const target = firstBeat + k * barLength;
-    const start = target - lead;
-    const end = target + phrase;
-    if (start >= -EPSILON && target >= from - EPSILON && end <= until + EPSILON) {
-      plans.push({ target, start: Math.max(0, start), end: Math.min(until, end), bar: k + 1 });
+    const start = target - barLength;
+    if (start >= 0 && target < total) {
+      if (start === target || (plans.length && target <= plans[plans.length - 1].target)) {
+        throw new RangeError('Audio timing is too large to represent individual bars accurately.');
+      }
+      if (plans.length >= MAX_TARGETS) throw new RangeError('The audio contains too many bars to generate training starts.');
+      plans.push({ target, start, end: total, bar: k + 1 });
     }
+  }
+  if (!plans.length) {
+    throw new RangeError('The audio is too short for one complete bar of pre-roll before a training start. Choose longer audio or check BPM and first bar.');
   }
   return plans;
 }

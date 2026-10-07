@@ -2,111 +2,53 @@
 <html lang="ko">
 <head>
   <meta charset="utf-8">
-  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
   <meta name="color-scheme" content="dark">
-  <meta name="theme-color" content="#111315">
-  <title>가사 트레이닝 | KENNETH</title>
-  <link rel="stylesheet" href="./lyric-trainer/styles.css?v=2">
+  <meta name="theme-color" content="#101114">
+  <title>랜덤 가사 연습 | KENNETH</title>
+  <link rel="stylesheet" href="./lyric-trainer/styles.css?v=3">
 </head>
 <body>
   <main class="app">
     <header class="topbar">
-      <a class="brand" href="./"><span class="logo">K</span><span>KENNETH<small>MUSIC WORKSPACE</small></span></a>
-      <div class="top-actions"><span class="local-tag" id="storageState">이 브라우저에 저장</span><a class="button subtle" href="./">홈으로 ↗</a></div>
+      <a class="brand" href="./"><span class="brand-mark">K</span><span>KENNETH<small>MUSIC WORKSPACE</small></span></a>
+      <div class="top-actions"><a class="home-link" href="./">홈으로 ↗</a><button id="logoutBtn" class="text-button" hidden>로그아웃</button></div>
     </header>
-    <section class="hero">
-      <div><div class="eyebrow"><span class="live-dot"></span> PERFORMANCE LAB / 01</div><h1>어디서 시작해도,<br><span>내 가사로 이어가기.</span></h1><p>3초 준비. 한 마디 듣고. 바로 이어 불러요.<br>랜덤 시작부터 반주 없이 박자 유지까지, 무대를 위한 가사 연습.</p></div>
-      <div class="hero-flow"><span>03<small>초 준비</small></span><i>→</i><span>01<small>마디 먼저</small></span><i>→</i><span class="accent-text">GO<small>가사 시작</small></span></div>
+    <section class="intro"><p class="eyebrow">RANDOM LYRIC TRAINER</p><h1>어디서 시작해도,<br class="mobile-break"> 내 가사로 이어가기.</h1><p>3초 준비. 한 마디 듣고. 곡 끝까지 이어 불러요.</p></section>
+
+    <section id="servicePanel" class="access-panel panel" aria-live="polite"><span class="access-icon">♫</span><h2 id="serviceTitle">내 연습실을 불러오고 있어요.</h2><p id="serviceMessage">잠시만 기다려 주세요.</p><button id="reloadBtn" class="button secondary" hidden>다시 불러오기</button></section>
+    <section id="loginPanel" class="access-panel panel" hidden>
+      <span class="access-icon">♫</span><h2>내 음원으로 연습하기.</h2><p>홈페이지 관리자 비밀번호로 로그인하세요.<br>한 번 올린 음원은 다른 기기에서도 불러올 수 있어요.</p>
+      <form id="loginForm" class="login-form"><label class="sr-only" for="password">홈페이지 관리자 비밀번호</label><input id="password" type="password" autocomplete="current-password" placeholder="관리자 비밀번호" required><button id="loginBtn" class="button primary" type="submit">연습실 열기 →</button></form>
+      <p id="loginMessage" class="error-text" role="status"></p>
     </section>
-    <section class="workspace">
-      <aside class="library panel">
-        <div class="panel-head"><h2>내 연습실</h2><span id="trackCount" class="muted">0곡</span></div>
-        <label class="upload"><input id="fileInput" type="file" accept="audio/*,.mp3,.wav,.m4a,.ogg,.flac,.aac" multiple><span class="upload-icon">＋</span><strong>연습할 음원 추가</strong><small>MP3 · WAV · M4A / 원곡 또는 MR</small></label>
-        <button class="text-button demo-button" id="demoBtn">데모 반주로 살펴보기 ↗</button>
-        <div id="trackList" class="track-list"></div>
-        <div class="divider"></div>
-        <div class="panel-head"><h2>박자 맞추기</h2><button id="analyzeBtn" class="text-button" disabled>다시 분석</button></div>
-        <p id="analysisState" class="hint">음원을 넣으면 BPM을 자동으로 추정해요.</p>
-        <div class="tempo-fields">
-          <label>BPM<input id="bpm" type="number" min="40" max="240" step="0.1" value="96" disabled></label>
-          <label>한 마디<select id="beatsPerBar" disabled><option value="4">4박 · 4/4</option><option value="3">3박 · 3/4</option><option value="6">6박 · 6/8 *</option></select></label>
-        </div>
-        <p class="hint tiny">* 6/8은 8분음표 기준 BPM을 입력하세요.</p>
-        <div class="tempo-alternatives" id="tempoAlternatives"></div>
-        <label class="offset-label">기준 마디 첫 박 <span>초</span><input id="offset" type="number" min="0" step="0.001" value="0" disabled></label>
-        <div class="button-row"><button id="tapBtn" class="button subtle" disabled>박자 탭</button><button id="markBeatBtn" class="button subtle" disabled>듣는 지점을 첫 박으로</button></div>
-        <p class="hint tiny">자동 분석은 마디의 첫 박을 확정하지 못해요. 아래 파형으로 들어보고, 정확한 첫 박에서 버튼을 누르거나 초를 입력하세요.</p>
-        <div class="nudge"><button id="nudgeBackBtn" disabled>− 0.01초</button><button id="nudgeNextBtn" disabled>＋ 0.01초</button><label><input id="metronome" type="checkbox"> 박자 확인 클릭</label></div>
-        <div class="divider"></div>
-        <div class="panel-head"><h2>오늘의 기록</h2><button id="resetStatsBtn" class="text-button">초기화</button></div>
-        <div class="stats"><div><strong id="attempts">0</strong><span>시도</span></div><div><strong id="successes">0</strong><span>성공</span></div><div><strong id="misses">0</strong><span>막힘</span></div></div>
-        <p class="hint tiny">성공·막힘은 직접 체크해요. 음성을 자동 채점하지 않아요.</p>
-      </aside>
-      <div class="main-column">
-        <section class="mode-section">
-          <div class="section-label">01 <span>연습 방법 고르기</span></div>
-          <div id="modeGrid" class="modes" role="group" aria-label="연습 방법">
-            <button class="mode active" data-mode="random" aria-pressed="true"><span class="mode-icon">↝</span><strong>랜덤 시작</strong><small>아무 마디에서 바로</small></button>
-            <button class="mode" data-mode="weak" aria-pressed="false"><span class="mode-icon">◎</span><strong>약점 복습</strong><small>막힌 구간만 다시</small></button>
-            <button class="mode" data-mode="loop" aria-pressed="false"><span class="mode-icon">↻</span><strong>구간 반복</strong><small>같은 구간 세 번</small></button>
-            <button class="mode" data-mode="recall" aria-pressed="false"><span class="mode-icon">◌</span><strong>가사 회상</strong><small>힌트 없이 떠올리기</small></button>
-            <button class="mode" data-mode="gap" aria-pressed="false"><span class="mode-icon">∿</span><strong>반주 공백</strong><small>한 마디 무음에도 계속</small></button>
-            <button class="mode" data-mode="stage" aria-pressed="false"><span class="mode-icon">↗</span><strong>시선 훈련</strong><small>고개 들고 이어 부르기</small></button>
-          </div>
-          <p id="modeDescription" class="mode-description">선택한 범위에서 마디의 첫 박을 랜덤으로 고릅니다. 한 마디 전부터 듣고, GO에 맞춰 가사를 시작하세요.</p>
-        </section>
-        <section class="stage panel">
-          <div class="stage-top"><div><span class="section-label">02 <span>트레이닝</span></span><h2 id="nowTitle">음원을 추가해 주세요</h2></div><span id="roundLabel" class="round-pill">READY TO PRACTICE</span></div>
-          <div class="stage-center">
-            <div id="stageStatus" class="stage-status">준비됐나요?</div>
-            <div id="count" class="big-count idle">READY</div>
-            <div id="beatDots" class="beat-dots" aria-hidden="true"><i></i><i></i><i></i><i></i></div>
-            <h3 id="message">시작은 어디든, 가사는 자연스럽게.</h3>
-            <p id="submessage">음원 추가 → BPM·첫 박 확인 → 연습 시작</p>
-            <button id="revealBtn" class="position-pill" disabled>시작 위치 숨김 · 눌러서 확인</button>
-          </div>
-          <div class="session-progress"><div id="progressBar"></div></div>
-          <div class="transport">
-            <button id="randomBtn" class="button primary" disabled><span>▶</span> 연습 시작 <kbd>N</kbd></button>
-            <button id="replayBtn" class="button subtle" disabled>↻ 같은 구간 <kbd>R</kbd></button>
-            <button id="pauseBtn" class="button subtle" disabled>Ⅱ 일시정지</button>
-            <button id="stopBtn" class="button subtle" disabled>■</button>
-          </div>
-          <div class="judge-row"><button id="successBtn" class="judge success" disabled>✓ 이어 불렀어요 <kbd>1</kbd></button><button id="missBtn" class="judge miss" disabled>다시 연습할래요 <kbd>2</kbd></button></div>
-        </section>
-        <section class="audio-panel panel">
-          <div class="panel-head"><h2>음원 확인 & 구간 지정</h2><button id="previewBtn" class="text-button" disabled>▶ 음원 듣기</button></div>
-          <div class="waveform-wrap"><canvas id="waveform" width="900" height="95" aria-label="음원 파형"></canvas><span id="waveformEmpty">음원을 넣으면 파형이 표시돼요.</span></div>
-          <div class="seek-row"><output id="previewTime">0:00.0</output><input id="seek" type="range" min="0" max="1" value="0" step="0.01" aria-label="음원 확인 위치" disabled><span id="durationLabel">0:00</span></div>
-          <div class="settings-grid">
-            <label>준비 시간<select id="countdown"><option value="3">3초</option><option value="5">5초</option><option value="0">바로 시작</option></select></label>
-            <label>미리 듣기<select id="preRollBars"><option value="1">1마디 전부터</option><option value="2">2마디 전부터</option><option value="0">없음</option></select></label>
-            <label>연습 길이<select id="lengthBars"><option value="2">2마디</option><option value="4" selected>4마디</option><option value="8">8마디</option><option value="16">16마디</option></select></label>
-            <label>시작 기준<select id="targetType"><option value="bars">모든 마디</option><option value="markers">내가 저장한 구간</option></select></label>
-          </div>
-          <details class="advanced"><summary>연습 범위 · 표시 설정 <span>＋</span></summary><div class="range-row"><label>시작 <input id="rangeStart" type="number" min="0" value="0" step="0.1"> 초</label><label>끝 <input id="rangeEnd" type="number" min="0" value="0" step="0.1"> 초</label><button id="fullRangeBtn" class="text-button">전체 곡</button></div><div class="checks"><label><input id="hidePosition" type="checkbox" checked> 시작 위치 숨기기</label><label><input id="autoHideLyrics" type="checkbox" checked> 연습할 때 가사 숨기기</label></div></details>
-          <p id="gridSummary" class="hint">기본 설정: 3초 준비 → 1마디 미리 듣기 → 4마디 연습</p>
-        </section>
-        <section class="notes-grid">
-          <article class="panel lyrics-panel">
-            <div class="panel-head"><h2>가사 노트</h2><div class="button-row"><button id="toggleLyricsBtn" class="text-button" disabled>가사 보기</button><button id="editLyricsBtn" class="text-button" disabled>편집</button></div></div>
-            <div id="lyricsHidden" class="lyrics-hidden"><span>◌</span><p>가사는 잠시 덮어둘게요.</p><small>막혔을 때만 확인해 보세요.</small></div>
-            <div id="lyricsView" class="lyrics-view" hidden></div>
-            <div id="lyricsEdit" hidden><textarea id="lyricsInput" placeholder="곡의 가사를 여기에 붙여넣으세요.&#10;&#10;[Verse 1]&#10;...&#10;&#10;[Hook]&#10;..." disabled></textarea><button id="saveLyricsBtn" class="button subtle" disabled>가사 저장</button></div>
-          </article>
-          <article class="panel marker-panel">
-            <div class="panel-head"><h2>내 연습 구간</h2><span id="weakCount" class="muted">약점 0개</span></div>
-            <p class="hint">원하는 위치를 듣고 저장하면 그 마디부터 연습할 수 있어요.</p>
-            <div class="marker-add"><input id="markerName" placeholder="예: Verse 2, 자주 막히는 부분" aria-label="구간 이름" maxlength="60" disabled><button id="addMarkerBtn" class="button subtle" disabled>＋ 저장</button></div>
-            <div id="markerList" class="marker-list"></div>
-            <button id="clearWeakBtn" class="text-button" disabled>이 곡의 약점 기록 초기화</button>
-          </article>
-        </section>
-      </div>
-    </section>
-    <footer><span>음원·가사·기록은 이 브라우저에 저장돼요. 다른 기기와 자동 공유되지 않아요.</span><span><kbd>N</kbd> 시작 <kbd>R</kbd> 재도전 <kbd>Space</kbd> 일시정지 <kbd>L</kbd> 가사</span></footer>
+
+    <div id="workspace" class="workspace" hidden>
+      <section class="library panel" aria-label="내 음원">
+        <div class="panel-head"><h2>내 음원</h2><span id="trackCount" class="muted">0곡</span></div>
+        <label class="sr-only" for="trackSelect">연습할 음원</label><select id="trackSelect" disabled><option value="">음원을 추가해 주세요</option></select>
+        <p id="libraryStatus" class="hint" role="status">음원을 불러오고 있어요.</p>
+        <div id="trackMeta" class="track-meta" hidden><span id="fileInfo"></span><button id="deleteBtn" class="text-button danger">이 곡 삭제</button></div>
+        <label id="uploadLabel" class="upload-button"><input id="fileInput" type="file" accept="audio/*,.mp3,.wav,.m4a,.aac,.ogg,.opus,.flac,.webm,.aiff,.aif" multiple><span>＋</span> 음원 추가</label>
+        <p class="hint tiny">MP3 · WAV · M4A · 파일당 최대 <span id="uploadLimit">80</span> MB</p>
+        <div id="uploadPanel" class="upload-progress" hidden><div><strong id="uploadName"></strong><span id="uploadPercent">0%</span></div><progress id="uploadProgress" max="100" value="0" aria-label="음원 업로드 진행률"></progress><p id="uploadMessage" class="hint" role="status"></p><button id="retryUploadBtn" class="button secondary" hidden>업로드 다시 시도</button></div>
+        <button id="retryTracksBtn" class="text-button" hidden>곡 목록 다시 불러오기</button>
+        <details id="legacyDetails" class="legacy"><summary>이전에 저장한 음원 가져오기</summary><p id="legacyMessage" class="hint">이 브라우저에 저장했던 음원은 그대로 남아 있어요. 원본 파일을 위에서 추가해도 됩니다.</p><button id="legacyBtn" class="button secondary" hidden>이전 음원 업로드</button></details>
+      </section>
+
+      <section class="trainer panel" aria-label="랜덤 가사 연습">
+        <div class="trainer-head"><div><span class="eyebrow">ON YOUR BEAT</span><h2 id="nowTitle">음원을 추가해 주세요</h2></div><span id="cloudState" class="cloud-pill">공유 연습실</span></div>
+        <div class="stage" aria-live="polite" aria-atomic="true"><p id="stageStatus" class="stage-status">준비됐나요?</p><div id="count" class="big-count idle">READY</div><div id="beatDots" class="beat-dots" aria-hidden="true"><i></i><i></i><i></i><i></i></div><h3 id="stageMessage">곡을 고르고, 한 번 눌러요.</h3><p id="stageDetail">랜덤으로 고른 마디의 한 마디 전부터 시작합니다.</p></div>
+        <div class="timeline"><label class="sr-only" for="seek">음원 재생 위치</label><input id="seek" type="range" min="0" max="1" value="0" step="0.01" disabled><div class="times"><output id="currentTime">0:00</output><span id="startInfo">3초 준비 → 1마디 먼저 → 곡 끝까지</span><span id="totalTime">0:00</span></div></div>
+        <div class="transport"><button id="randomBtn" class="button primary random-button" disabled><span>↝</span> 랜덤 연습 시작</button><div class="small-transport"><button id="pauseBtn" class="button secondary" disabled>Ⅱ 일시정지</button><button id="stopBtn" class="button secondary" disabled>■ 멈추기</button></div></div>
+        <p id="playbackMessage" class="playback-note" role="status">시작한 음원은 곡 끝까지 계속 재생합니다.</p>
+        <details id="beatSettings" class="beat-settings"><summary>박자 설정 <span id="gridBadge">96 BPM · 4박</span></summary><p id="gridNote" class="hint">96 BPM은 기본값이에요. 곡의 BPM과 초반 첫 마디의 첫 박을 확인해 주세요.</p><form id="gridForm"><div class="grid-fields"><label>BPM<input id="bpm" type="number" min="40" max="240" step="0.1" value="96" inputmode="decimal" required disabled></label><label>첫 마디 첫 박 <span>초</span><input id="offset" type="number" min="0" step="0.001" value="0" inputmode="decimal" required disabled></label></div><div class="grid-actions"><button id="previewBtn" type="button" class="button secondary" disabled>▶ 처음부터 듣기</button><button id="markBeatBtn" type="button" class="button secondary" disabled>지금 위치를 첫 박으로</button><button id="saveGridBtn" type="submit" class="button secondary" disabled>박자 저장</button></div></form><p class="hint tiny">한 마디는 4박 기준이에요. 자동 추정 값도 첫 박을 들어서 확인해 주세요.</p></details>
+      </section>
+    </div>
+    <footer>로그인한 내 공유 연습실에 음원을 보관합니다.<br class="mobile-break"> 다른 기기에서도 같은 곡을 골라 연습하세요.</footer>
   </main>
+  <audio id="player" preload="metadata" playsinline></audio>
   <div id="toast" class="toast" role="status" aria-live="polite"></div>
-  <script type="module" src="./lyric-trainer/app.js?v=2"></script>
+  <script type="module" src="./lyric-trainer/app.js?v=3"></script>
 </body>
 </html>

@@ -1,897 +1,538 @@
 import { buildTargets, barSeconds, pickTarget } from './engine.js';
 
-const $ = id => document.getElementById(id);
-const ids = ['fileInput','storageState','trackCount','trackList','demoBtn','analyzeBtn','analysisState','bpm','beatsPerBar','offset','tempoAlternatives','tapBtn','markBeatBtn','nudgeBackBtn','nudgeNextBtn','metronome','attempts','successes','misses','resetStatsBtn','modeGrid','modeDescription','nowTitle','roundLabel','stageStatus','count','beatDots','message','submessage','revealBtn','progressBar','randomBtn','replayBtn','pauseBtn','stopBtn','successBtn','missBtn','previewBtn','waveform','waveformEmpty','previewTime','seek','durationLabel','countdown','preRollBars','lengthBars','targetType','rangeStart','rangeEnd','fullRangeBtn','hidePosition','autoHideLyrics','gridSummary','toggleLyricsBtn','editLyricsBtn','lyricsHidden','lyricsView','lyricsEdit','lyricsInput','saveLyricsBtn','markerName','addMarkerBtn','markerList','weakCount','clearWeakBtn','toast'];
-const ui = Object.fromEntries(ids.map(id => [id, $(id)]));
-const descriptions = {
-  random: '선택한 범위에서 마디의 첫 박을 랜덤으로 고릅니다. 한 마디 전부터 듣고, GO에 맞춰 가사를 시작하세요.',
-  weak: '막힘으로 표시한 구간을 다시 고릅니다. 성공을 두 번 연속 체크하면 약점 목록에서 빠집니다.',
-  loop: '선택한 구간을 세 번 반복합니다. 매번 준비 시간과 미리 듣기를 거친 뒤 같은 지점에서 시작해요.',
-  recall: '가사와 시작 위치를 숨깁니다. 한 마디를 듣고 다음 가사를 떠올린 뒤, 필요할 때만 가사를 확인해요.',
-  gap: '연습 중간에 한 마디 동안 반주를 끕니다. 멈추지 말고 부르다가 반주가 돌아올 때 박자를 확인해요. 최소 4마디를 골라 주세요.',
-  stage: '연습 중 두 마디마다 시선 방향을 바꿉니다. 화면의 짧은 신호를 확인하고 그쪽 관객을 바라보며 이어 불러요.'
+const ids = ['servicePanel','serviceTitle','serviceMessage','reloadBtn','loginPanel','loginForm','password','loginBtn','loginMessage','workspace','logoutBtn','trackCount','trackSelect','libraryStatus','trackMeta','fileInfo','deleteBtn','uploadLabel','fileInput','uploadLimit','uploadPanel','uploadName','uploadPercent','uploadProgress','uploadMessage','retryUploadBtn','retryTracksBtn','legacyDetails','legacyMessage','legacyBtn','nowTitle','cloudState','stageStatus','count','beatDots','stageMessage','stageDetail','seek','currentTime','startInfo','totalTime','randomBtn','pauseBtn','stopBtn','playbackMessage','beatSettings','gridBadge','gridNote','gridForm','bpm','offset','previewBtn','markBeatBtn','saveGridBtn','player','toast'];
+const ui = Object.fromEntries(ids.map(id => [id, document.getElementById(id)]));
+const audio = ui.player;
+const API = '/api/lyric-trainer';
+const SELECTED_KEY = 'kenneth_lyric_trainer_cloud_selected_v3';
+const MAX_ANALYSIS_BYTES = 8 * 1048576;
+let tracks = [], selected = null, session = null, generation = 0, countdownTimer = 0, frame = 0, toastTimer = 0;
+let authGeneration = 0, maxUploadBytes = 80 * 1048576, uploadGeneration = 0, uploading = false, uploadQueue = [], uploadXHR = null;
+let analysisGeneration = 0, analysisWorker = null, analysisContext = null, analysisCancel = null, legacyTracks = null;
+const lastTargets = new Map();
+const gridRevisions = new Map();
+const localFiles = new Map();
+const metadataWrites = new Map();
+const fmt = seconds => {
+  const total = Math.max(0, Math.floor(Number(seconds) || 0));
+  return Math.floor(total / 60) + ':' + String(total % 60).padStart(2, '0');
 };
-const DB = 'kenneth_lyric_trainer'; // V1's database and store remain intact.
-const SETTINGS = 'kenneth_lyric_trainer_settings_v3';
-let db, tracks = [], selected = null, buffer = null, context = null;
-let source = null, gain = null, clickNodes = [], session = null, raf = 0, lastPlan = null, lastTrial = null;
-let generation = 0, analysisGeneration = 0, activeWorker = null, activeAnalysisCancel = null, mode = 'random', previewOffset = 0, revealed = false;
-let waveformPeaks = [], toastTimer, taps = [], loadGeneration = 0, busyImport = false;
-let stats = { attempts: 0, successes: 0, misses: 0 };
-let writeQueue = Promise.resolve();
-const selectedKey = 'kenneth_lyric_trainer_selected_v2';
-const fmt = (seconds, decimal = false) => {
-  const s = Math.max(0, Number(seconds) || 0);
-  return Math.floor(s / 60) + ':' + (decimal ? (s % 60).toFixed(1).padStart(4, '0') : String(Math.floor(s % 60)).padStart(2, '0'));
-};
-const size = n => (n / 1048576).toFixed(1) + ' MB';
-const act = fn => (...args) => Promise.resolve().then(() => fn(...args)).catch(reportError);
-function reportError(error) {
-  console.error(error);
-  toast(error.name === 'QuotaExceededError' ? '브라우저 저장 공간이 부족해요. 사용하지 않는 음원을 삭제해 주세요.' : (error.message || '처리하지 못했어요. 다시 시도해 주세요.'));
-}
-function toast(text) {
-  ui.toast.textContent = text;
+const size = bytes => (Number(bytes) / 1048576).toFixed(1) + ' MB';
+const now = () => performance.now();
+const duration = () => Number.isFinite(audio.duration) && audio.duration > 0 ? audio.duration : Number(selected?.duration) || 0;
+function remember(id) { try { localStorage.setItem(SELECTED_KEY, id || ''); } catch { /* Restricted storage is optional. */ } }
+function remembered() { try { return localStorage.getItem(SELECTED_KEY); } catch { return null; } }
+function toast(message) {
+  ui.toast.textContent = message;
   ui.toast.classList.add('show');
   clearTimeout(toastTimer);
-  toastTimer = setTimeout(() => ui.toast.classList.remove('show'), 3600);
+  toastTimer = setTimeout(() => ui.toast.classList.remove('show'), 4200);
 }
-function safeGet(key) { try { return localStorage.getItem(key); } catch { return null; } }
-function safeSet(key, value) { try { localStorage.setItem(key, value); } catch { /* IndexedDB still works when localStorage is restricted. */ } }
-function openDB() {
-  return new Promise((resolve, reject) => {
-    const request = indexedDB.open(DB, 2);
-    request.onupgradeneeded = () => {
-      if (!request.result.objectStoreNames.contains('tracks')) request.result.createObjectStore('tracks', { keyPath: 'id', autoIncrement: true });
-    };
-    request.onerror = () => reject(request.error);
-    request.onblocked = () => toast('다른 가사연습 탭을 닫고 새로고침해 주세요.');
-    request.onsuccess = () => {
-      request.result.onversionchange = () => request.result.close();
-      resolve(request.result);
-    };
-  });
+function report(error) {
+  if (error?.name !== 'AbortError') toast(error?.message || '처리하지 못했어요. 다시 시도해 주세요.');
 }
-function storeAction(action, value) {
-  return new Promise((resolve, reject) => {
-    const tx = db.transaction('tracks', action === 'getAll' ? 'readonly' : 'readwrite');
-    const store = tx.objectStore('tracks');
-    const request = value === undefined ? store[action]() : store[action](value);
-    let result;
-    request.onsuccess = () => { result = request.result; };
-    tx.oncomplete = () => resolve(result);
-    tx.onerror = () => reject(tx.error || request.error);
-    tx.onabort = () => reject(tx.error || new Error('저장을 완료하지 못했습니다.'));
-  });
-}
-async function persist(track = selected) {
-  if (!track) return;
-  // Clone metadata now; serialized saves keep ratings, analysis and lyrics in order.
-  const snapshot = { ...track, markers: structuredClone(track.markers || []), practice: structuredClone(track.practice || []) };
-  const next = writeQueue.catch(() => {}).then(() => storeAction('put', snapshot));
-  writeQueue = next;
-  await next;
-}
-function prepareTrack(track) {
-  track.markers ||= [];
-  track.practice ||= [];
-  track.lyrics ||= '';
-  track.beatsPerBar ||= 4;
-  return track;
-}
-async function refreshTracks() {
-  tracks = (await storeAction('getAll')).map(prepareTrack);
-  tracks.sort((a, b) => (b.updatedAt || 0) - (a.updatedAt || 0));
-  renderTracks();
-}
-function renderTracks() {
-  ui.trackList.replaceChildren();
-  ui.trackCount.textContent = tracks.length + '곡';
-  if (!tracks.length) {
-    const empty = document.createElement('div');
-    empty.className = 'empty';
-    empty.textContent = '내 곡을 넣고 첫 연습을 시작해 보세요.';
-    ui.trackList.append(empty);
+function abortError() { return new DOMException('작업을 취소했습니다.', 'AbortError'); }
+async function api(path, { method = 'GET', body } = {}) {
+  const requestAuth = authGeneration;
+  const response = await fetch(API + path, { method, credentials: 'same-origin', cache: 'no-store', ...(body === undefined ? {} : { headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) }) });
+  let data;
+  try { data = await response.json(); } catch { throw new Error('연습실 응답을 읽지 못했어요. 잠시 후 다시 시도해 주세요.'); }
+  if (!response.ok || data.ok === false) {
+    if (response.status === 401 && requestAuth === authGeneration) showLogin('로그인이 만료됐어요. 다시 로그인해 주세요.');
+    const error = new Error(data.error || '요청을 완료하지 못했어요.');
+    error.status = response.status;
+    throw error;
   }
-  for (const track of tracks) {
-    const row = document.createElement('div');
-    row.className = 'track' + (selected?.id === track.id ? ' selected' : '');
-    const choose = document.createElement('button');
-    choose.className = 'track-select';
-    choose.setAttribute('aria-label', track.name + ' 선택');
-    const icon = document.createElement('span');
-    icon.className = 'track-icon';
-    icon.textContent = selected?.id === track.id ? '♫' : '♪';
-    const copy = document.createElement('span');
-    copy.className = 'track-copy';
-    const name = document.createElement('span');
-    name.className = 'track-name'; name.textContent = track.name;
-    const meta = document.createElement('span');
-    meta.className = 'track-meta';
-    meta.textContent = (track.duration ? fmt(track.duration) + ' · ' : '') + size(track.size) + (track.bpm ? ' · ' + track.bpm + ' BPM' : '');
-    copy.append(name, meta); choose.append(icon, copy);
-    choose.onclick = act(() => selectTrack(track.id));
-    const remove = document.createElement('button');
-    remove.className = 'delete-track'; remove.textContent = '×';
-    remove.setAttribute('aria-label', track.name + ' 삭제');
-    remove.onclick = act(async () => {
-      if (!confirm('이 브라우저에서 "' + track.name + '" 음원과 연습 기록을 삭제할까요?')) return;
-      await writeQueue.catch(() => {});
-      await storeAction('delete', track.id);
-      if (selected?.id === track.id) {
-        clearPlayback(); cancelAnalysis(); resetTaps(); ++loadGeneration;
-        selected = null; buffer = null; lastPlan = null; lastTrial = null; waveformPeaks = [];
-        safeSet(selectedKey, '');
-        ui.nowTitle.textContent = '음원을 추가해 주세요';
-        ui.lyricsInput.value = ''; ui.lyricsView.textContent = ''; hideLyrics();
-        ui.markerList.replaceChildren(); ui.weakCount.textContent = '약점 0개';
-        ui.analysisState.textContent = '음원을 넣으면 BPM을 자동으로 추정해요.';
-        readyStage(); drawWaveform(); updateControls();
-      }
-      await refreshTracks();
-    });
-    row.append(choose, remove); ui.trackList.append(row);
-  }
+  return data;
 }
-function getContext() {
-  if (!context) {
-    const Ctor = window.AudioContext || window.webkitAudioContext;
-    if (!Ctor) throw new Error('이 브라우저는 오디오 재생을 지원하지 않아요. 최신 Chrome 또는 Edge를 사용해 주세요.');
-    context = new Ctor({ latencyHint: 'interactive' });
-    context.onstatechange = () => {
-      if (context.state === 'suspended' && session && !session.paused) {
-        pauseSession(); toast('오디오가 일시정지됐어요. 재개 버튼을 눌러 주세요.');
-      }
-    };
-  }
-  return context;
-}
-function updateControls() {
-  const hasTrack = !!selected, ready = hasTrack && !!buffer && Number(selected.bpm) > 0;
-  for (const id of ['bpm','offset','beatsPerBar','tapBtn','nudgeBackBtn','nudgeNextBtn','metronome','markerName','lyricsInput','saveLyricsBtn','toggleLyricsBtn','editLyricsBtn','clearWeakBtn']) ui[id].disabled = !hasTrack;
-  ui.analyzeBtn.disabled = !buffer || !!activeWorker;
-  ui.previewBtn.disabled = !buffer;
-  ui.seek.disabled = !buffer || isPositionHidden();
-  ui.markBeatBtn.disabled = !buffer;
-  ui.addMarkerBtn.disabled = !ready;
-  ui.randomBtn.disabled = !ready || !!activeWorker;
-  ui.replayBtn.disabled = !ready || !lastPlan || !!activeWorker;
-  ui.revealBtn.disabled = !lastPlan;
-  ui.stopBtn.disabled = !session;
-  ui.pauseBtn.disabled = !session;
-  ui.pauseBtn.textContent = session?.paused ? '▶ 재개' : 'Ⅱ 일시정지';
-  const rating = !!lastTrial && !lastTrial.rated && lastTrial.trackId === selected?.id && lastTrial.reachedTarget && (!session || session.type !== 'preview');
-  ui.successBtn.disabled = !rating;
-  ui.missBtn.disabled = !rating;
-}
-function readyStage(message = '시작은 어디든, 가사는 자연스럽게.') {
-  ui.stageStatus.textContent = selected && buffer ? '첫 박을 확인하고 시작해요' : '준비됐나요?';
-  ui.count.textContent = 'READY'; ui.count.className = 'big-count idle';
-  ui.message.textContent = message; ui.submessage.textContent = '3초 준비 → 1마디 미리 듣기 → 가사 시작';
-  ui.roundLabel.textContent = 'READY TO PRACTICE';
-  ui.progressBar.style.width = '0%';
-  setBeat(-1);
+function trackURL(track) {
+  const url = new URL(track.audioUrl || API + '/audio/' + encodeURIComponent(track.id), location.origin);
+  if (url.origin !== location.origin || !url.pathname.startsWith(API + '/audio/')) throw new Error('음원 주소를 확인해 주세요.');
+  return url.href;
 }
 function cancelAnalysis() {
-  ++analysisGeneration;
-  if (activeWorker) activeWorker.terminate();
-  activeWorker = null;
-  const cancel = activeAnalysisCancel;
-  activeAnalysisCancel = null;
-  if (cancel) cancel();
+  analysisGeneration += 1;
+  analysisWorker?.terminate(); analysisWorker = null;
+  analysisCancel?.(); analysisCancel = null;
+  if (analysisContext) analysisContext.close().catch(() => {});
+  analysisContext = null;
 }
-async function selectTrack(id) {
-  if (id === selected?.id && buffer) return;
-  clearPlayback(); cancelAnalysis(); resetTaps();
-  const myLoad = ++loadGeneration;
-  selected = tracks.find(t => t.id === id);
-  if (!selected) return;
-  const track = selected;
-  buffer = null; lastPlan = null; lastTrial = null; revealed = false; previewOffset = 0; taps = [];
-  safeSet(selectedKey, String(id));
-  ui.nowTitle.textContent = track.name;
-  ui.bpm.value = track.bpm || 96;
-  ui.beatsPerBar.value = track.beatsPerBar || 4;
-  ui.offset.value = Number(track.offset || 0).toFixed(3);
-  ui.rangeStart.value = track.rangeStart || 0;
-  ui.rangeEnd.value = track.rangeEnd || track.duration || 0;
-  ui.lyricsInput.value = track.lyrics;
-  ui.lyricsView.textContent = track.lyrics || '저장된 가사가 없어요. 편집을 눌러 가사를 붙여넣어 주세요.';
-  hideLyrics(); renderTracks(); renderMarkers(); readyStage('음원을 준비하고 있어요.'); updateControls();
-  ui.analysisState.textContent = '음원 읽는 중…';
-  ui.tempoAlternatives.replaceChildren();
-  try {
-    const decoded = await getContext().decodeAudioData(await track.blob.arrayBuffer());
-    if (myLoad !== loadGeneration || selected?.id !== track.id) return;
-    buffer = decoded;
-    track.duration = decoded.duration;
-    if (!(Number(track.rangeEnd) > 0) || track.rangeEnd > track.duration) track.rangeEnd = track.duration;
-    ui.rangeEnd.value = Number(track.rangeEnd).toFixed(1);
-    ui.seek.max = decoded.duration; ui.seek.value = 0;
-    ui.durationLabel.textContent = fmt(decoded.duration);
-    waveformPeaks = makePeaks(decoded); drawWaveform(); renderAnalysis(track); updateSummary();
-    await persist(track);
-    if (myLoad !== loadGeneration) return;
-    readyStage(); updateControls();
-    if (!track.bpm) await analyzeTrack();
-  } catch (error) {
-    if (myLoad !== loadGeneration) return;
-    buffer = null; ui.analysisState.textContent = '이 음원은 읽지 못했어요. MP3 또는 WAV로 변환해 주세요.';
-    readyStage('음원 형식을 확인해 주세요.'); updateControls();
-    reportError(error);
-  }
+function clearClock() {
+  clearTimeout(countdownTimer); countdownTimer = 0;
+  cancelAnimationFrame(frame); frame = 0;
 }
-function makePeaks(audioBuffer) {
-  const data = audioBuffer.getChannelData(0), count = 550, chunk = Math.ceil(data.length / count), peaks = [];
-  for (let i = 0; i < count; i++) {
-    let peak = 0;
-    for (let j = i * chunk; j < Math.min(data.length, (i + 1) * chunk); j += 8) peak = Math.max(peak, Math.abs(data[j]));
-    peaks.push(peak);
-  }
-  return peaks;
+function setStage(status, count, message, detail, idle = false) {
+  if (ui.stageStatus.textContent !== status) ui.stageStatus.textContent = status;
+  if (ui.count.textContent !== count) ui.count.textContent = count;
+  if (ui.count.classList.contains('idle') !== idle) ui.count.classList.toggle('idle', idle);
+  if (ui.stageMessage.textContent !== message) ui.stageMessage.textContent = message;
+  if (ui.stageDetail.textContent !== detail) ui.stageDetail.textContent = detail;
 }
-function drawWaveform() {
-  const canvas = ui.waveform, c = canvas.getContext('2d'), w = canvas.width, h = canvas.height;
-  c.clearRect(0, 0, w, h);
-  ui.waveformEmpty.hidden = !!waveformPeaks.length;
-  if (!waveformPeaks.length || !buffer) return;
-  const max = Math.max(...waveformPeaks, .01), dur = buffer.duration;
-  const start = Number(ui.rangeStart.value) / dur * w, end = Number(ui.rangeEnd.value) / dur * w;
-  c.fillStyle = '#d7f57107'; c.fillRect(start, 0, end - start, h);
-  waveformPeaks.forEach((peak, i) => {
-    const x = i / waveformPeaks.length * w, height = Math.max(2, peak / max * h * .72);
-    c.fillStyle = x >= start && x <= end ? '#92a47a' : '#454f45';
-    c.fillRect(x, (h - height) / 2, Math.max(1, w / waveformPeaks.length - .55), height);
-  });
-  // Hide session position when the exercise intentionally conceals it.
-  if (!isPositionHidden()) {
-    const x = previewOffset / dur * w;
-    c.strokeStyle = '#d7f571'; c.lineWidth = 1.5; c.beginPath(); c.moveTo(x, 0); c.lineTo(x, h); c.stroke();
-  }
-  if (selected?.bpm) {
-    const b = barSeconds(selected.bpm, selected.beatsPerBar);
-    const step = Math.max(1, Math.ceil(dur / b / 70));
-    for (let t = Number(selected.offset || 0); t < dur; t += b * step) {
-      c.fillStyle = '#c1abe655'; c.fillRect(t / dur * w, 0, 1, 6);
-    }
-  }
+function resetStage() {
+  setStage('준비됐나요?', 'READY', selected ? '랜덤 버튼을 누르면 시작해요.' : '곡을 고르고, 한 번 눌러요.', '3초 준비 → 한 마디 미리 듣기 → 곡 끝까지', true);
+  ui.startInfo.textContent = '3초 준비 → 1마디 먼저 → 곡 끝까지';
+  Array.from(ui.beatDots.children).forEach(dot => dot.classList.remove('active'));
 }
-function monoForAnalysis(audioBuffer) {
-  // Average samples in each resampling window to reduce aliasing and worker memory.
-  const targetRate = Math.min(11025, audioBuffer.sampleRate);
-  const length = Math.floor(Math.min(audioBuffer.length, audioBuffer.sampleRate * 180) * targetRate / audioBuffer.sampleRate);
-  const out = new Float32Array(length), channels = audioBuffer.numberOfChannels;
-  const data = Array.from({ length: channels }, (_, i) => audioBuffer.getChannelData(i));
-  const ratio = audioBuffer.sampleRate / targetRate;
-  for (let i = 0; i < length; i++) {
-    const first = Math.floor(i * ratio), end = Math.min(audioBuffer.length, Math.floor((i + 1) * ratio));
-    let sum = 0;
-    for (let j = first; j < end; j++) for (let k = 0; k < channels; k++) sum += data[k][j];
-    out[i] = sum / Math.max(1, (end - first) * channels);
-  }
-  return { samples: out, sampleRate: targetRate };
-}
-async function analyzeTrack() {
-  if (!buffer || !selected) return;
-  clearPlayback(); cancelAnalysis();
-  const track = selected, audioBuffer = buffer, id = analysisGeneration;
-  const revision = track.gridRevision || 0;
-  ui.analysisState.textContent = '박자를 분석하고 있어요…';
-  let worker;
-  try {
-    worker = new Worker(new URL('./beat-worker.js', import.meta.url), { type: 'module' });
-    activeWorker = worker; updateControls();
-    const data = monoForAnalysis(audioBuffer);
-    const result = await new Promise((resolve, reject) => {
-      let settled = false, timeout;
-      const complete = (error, value) => {
-        if (settled) return;
-        settled = true;
-        clearTimeout(timeout);
-        if (activeAnalysisCancel === cancel) activeAnalysisCancel = null;
-        error ? reject(error) : resolve(value);
-      };
-      const cancel = () => complete(new Error('분석이 취소됐어요.'));
-      activeAnalysisCancel = cancel;
-      timeout = setTimeout(() => { worker.terminate(); complete(new Error('분석이 오래 걸려요. BPM과 첫 박을 직접 입력해 주세요.')); }, 45000);
-      worker.onmessage = event => complete(event.data.error ? new Error(event.data.error) : null, event.data.result);
-      worker.onerror = () => complete(new Error('자동 분석을 실행하지 못했어요. BPM을 직접 입력해 주세요.'));
-      try { worker.postMessage({ id, ...data }, [data.samples.buffer]); }
-      catch (error) { complete(error); }
-    });
-    if (id !== analysisGeneration || selected?.id !== track.id || (track.gridRevision || 0) !== revision) return;
-    track.bpm = result.bpm; track.offset = result.offset; track.analysis = result; track.manualGrid = false;
-    ui.bpm.value = track.bpm; ui.offset.value = Number(track.offset).toFixed(3);
-    await persist(track);
-    if (id !== analysisGeneration || selected?.id !== track.id || (track.gridRevision || 0) !== revision) return;
-    renderAnalysis(track); updateSummary(); renderTracks(); drawWaveform();
-  } catch (error) {
-    if (id !== analysisGeneration || selected?.id !== track.id) return;
-    ui.analysisState.textContent = '자동 추정 실패 · BPM과 첫 박을 직접 입력해 주세요.';
-    reportError(error);
-  } finally {
-    worker?.terminate();
-    if (activeWorker === worker) activeWorker = null;
-    updateControls();
-  }
-}
-function renderAnalysis(track) {
-  if (track.manualGrid) ui.analysisState.textContent = '직접 설정한 박자 · 첫 박을 들어서 확인해 주세요.';
-  else if (track.analysis) {
-    const confidence = track.analysis.confidence || 0;
-    ui.analysisState.textContent = '추정 ' + track.bpm + ' BPM · 분석 일관성 ' + Math.round(confidence * 100) + '% · 첫 박 확인 필요';
-  } else if (track.bpm) ui.analysisState.textContent = track.bpm + ' BPM · 저장된 박자';
-  else ui.analysisState.textContent = '자동 분석을 준비하고 있어요.';
-  ui.tempoAlternatives.replaceChildren();
-  for (const candidate of (track.analysis?.candidates || []).slice(0, 3)) {
-    const btn = document.createElement('button');
-    btn.textContent = candidate.bpm + ' BPM'; btn.title = '이 BPM으로 바꾸기';
-    btn.onclick = act(async () => { ui.bpm.value = candidate.bpm; await saveGrid(); });
-    ui.tempoAlternatives.append(btn);
-  }
-}
-async function saveGrid() {
-  if (!selected) return;
-  const bpm = Number(ui.bpm.value), offset = Number(ui.offset.value), beats = Number(ui.beatsPerBar.value);
-  if (!Number.isFinite(bpm) || bpm < 40 || bpm > 240) throw new Error('BPM은 40~240 사이로 입력해 주세요.');
-  if (!Number.isFinite(offset) || offset < 0 || (buffer && offset >= buffer.duration)) throw new Error('첫 박은 곡 안의 시간으로 입력해 주세요.');
-  if (![3,4,6].includes(beats)) throw new Error('한 마디의 박 수를 선택해 주세요.');
-  clearPlayback(); cancelAnalysis(); lastPlan = null; lastTrial = null;
-  const track = selected;
-  Object.assign(track, { bpm, offset, beatsPerBar: beats, manualGrid: true, gridRevision: (track.gridRevision || 0) + 1 });
-  resetTaps();
-  await persist(track);
-  if (selected !== track) return;
-  renderAnalysis(track); drawWaveform(); updateSummary(); renderTracks(); readyStage('박자 설정을 저장했어요.'); updateControls();
-}
-function resetTaps() {
-  clearTimeout(tapTempo.timer); tapTempo.timer = null; taps = [];
-  ui.tapBtn.textContent = '박자 탭';
-}
-function tapTempo() {
-  const now = performance.now();
-  if (taps.length && now - taps[taps.length - 1] > 2200) taps = [];
-  taps.push(now); if (taps.length > 9) taps.shift();
-  ui.tapBtn.textContent = '탭 ' + taps.length + '번';
-  if (taps.length >= 4) {
-    const intervals = taps.slice(1).map((t, i) => t - taps[i]).sort((a, b) => a - b);
-    const interval = intervals[Math.floor(intervals.length / 2)];
-    const bpm = Math.round(60000 / interval * 10) / 10;
-    if (bpm >= 40 && bpm <= 240) {
-      ui.bpm.value = bpm;
-      ui.analysisState.textContent = '탭 추정 ' + bpm + ' BPM · 탭을 마치면 저장돼요.';
-      clearTimeout(tapTempo.timer);
-      const track = selected;
-      tapTempo.timer = setTimeout(() => { if (selected === track) act(saveGrid)(); ui.tapBtn.textContent = '박자 탭'; }, 1600);
-    }
-  }
-}
-function currentPosition() {
-  if (!session || session.paused) return previewOffset;
-  return Math.min(session.end, buffer?.duration || Infinity, session.offset + Math.max(0, context.currentTime - session.when));
-}
-function setBeat(active) {
-  const beats = Number(selected?.beatsPerBar || 4);
-  if (ui.beatDots.children.length !== beats) {
-    ui.beatDots.replaceChildren(...Array.from({ length: beats }, () => document.createElement('i')));
-  }
-  [...ui.beatDots.children].forEach((dot, i) => dot.classList.toggle('active', i === active));
-}
-function clearPlayback() {
-  ++generation;
-  cancelAnimationFrame(raf); raf = 0;
-  if (source) {
-    source.onended = null;
-    try { source.stop(); } catch { /* Source may already have ended. */ }
-    source.disconnect(); source = null;
-  }
-  if (gain) { gain.disconnect(); gain = null; }
-  for (const node of clickNodes) { try { node.stop(); } catch {} node.disconnect(); }
-  clickNodes = [];
+function stopPlayback({ resetPosition = true, render = true } = {}) {
+  generation += 1;
+  clearClock();
   session = null;
-  ui.previewBtn.textContent = '▶ 음원 듣기'; updatePreviewUI();
-  updateControls();
+  audio.pause(); audio.muted = false;
+  if (resetPosition) { try { audio.currentTime = 0; } catch { /* Metadata may be loading. */ } }
+  if ('mediaSession' in navigator) navigator.mediaSession.playbackState = 'none';
+  if (render) { resetStage(); renderTransport(); renderTime(); }
 }
-function createSource(offset, when, end, s) {
-  const ctx = getContext();
-  const node = ctx.createBufferSource(), volume = ctx.createGain();
-  node.buffer = buffer; node.connect(volume); volume.connect(ctx.destination);
-  source = node; gain = volume;
-  volume.gain.setValueAtTime(1, ctx.currentTime);
-  const gapStart = s.gapStart, gapEnd = s.gapEnd;
-  if (s.mode === 'gap' && Number.isFinite(gapStart)) {
-    const absolute = pos => when + pos - offset;
-    if (offset >= gapStart && offset < gapEnd) volume.gain.setValueAtTime(0, when);
-    if (gapStart > offset) {
-      volume.gain.setValueAtTime(1, Math.max(when, absolute(gapStart) - .008));
-      volume.gain.linearRampToValueAtTime(0, absolute(gapStart));
-    }
-    if (gapEnd > offset) {
-      volume.gain.setValueAtTime(0, Math.max(when, absolute(gapEnd) - .008));
-      volume.gain.linearRampToValueAtTime(1, absolute(gapEnd));
-    }
-  }
-  const my = generation;
-  node.onended = () => {
-    if (my !== generation || session !== s || s.paused) return;
-    finishSession(s);
-  };
-  node.start(when, offset, Math.max(.001, end - offset));
-  scheduleClicks(s, offset, when, end);
+function renderTransport() {
+  const available = !!selected;
+  const ready = available && duration() > 0;
+  ui.randomBtn.disabled = !ready || session?.phase === 'unlock' || session?.phase === 'starting';
+  ui.pauseBtn.disabled = !session || session.phase === 'unlock';
+  ui.stopBtn.disabled = !session;
+  const paused = session && ['paused','blocked'].includes(session.phase);
+  ui.pauseBtn.textContent = paused ? '▶ 이어 재생' : 'Ⅱ 일시정지';
+  ui.seek.disabled = !ready || !!session && ['unlock','countdown','starting'].includes(session.phase);
+  for (const name of ['bpm','offset','previewBtn','markBeatBtn','saveGridBtn']) ui[name].disabled = !available;
+  ui.deleteBtn.disabled = !available;
 }
-function scheduleClicks(s, offset, when, end) {
-  if (!ui.metronome.checked || !selected?.bpm) return;
-  const ctx = getContext(), beat = 60 / selected.bpm, origin = Number(selected.offset || 0);
-  const firstIndex = Math.max(0, Math.ceil((offset - origin) / beat - 1e-6));
-  let count = 0;
-  for (let i = firstIndex; origin + i * beat < end && count < 1600; i++, count++) {
-    const position = origin + i * beat;
-    // The silent-bar exercise really is silent; no metronome is played in the gap.
-    if (s.mode === 'gap' && position >= s.gapStart && position < s.gapEnd) continue;
-    const at = when + position - offset;
-    const oscillator = ctx.createOscillator(), envelope = ctx.createGain();
-    oscillator.frequency.value = i % selected.beatsPerBar === 0 ? 1350 : 950;
-    envelope.gain.setValueAtTime(0, at);
-    envelope.gain.linearRampToValueAtTime(.10, at + .002);
-    envelope.gain.exponentialRampToValueAtTime(.001, at + .045);
-    oscillator.connect(envelope); envelope.connect(ctx.destination);
-    oscillator.onended = () => envelope.disconnect();
-    oscillator.start(at); oscillator.stop(at + .05);
-    clickNodes.push(oscillator);
+function renderTime() {
+  const total = duration();
+  ui.seek.max = String(total || 1);
+  ui.seek.value = String(Math.min(total, Math.max(0, audio.currentTime || 0)));
+  ui.currentTime.textContent = fmt(audio.currentTime);
+  ui.totalTime.textContent = fmt(total);
+  if ('mediaSession' in navigator && navigator.mediaSession.setPositionState && total > 0) {
+    try { navigator.mediaSession.setPositionState({ duration: total, playbackRate: audio.playbackRate || 1, position: Math.min(total, Math.max(0, audio.currentTime || 0)) }); } catch { /* Older browsers do not support every state. */ }
   }
 }
-async function startPreview(position = previewOffset) {
-  if (!buffer) return;
-  clearPlayback(); hidePositionInfo();
-  const my = generation, trackId = selected?.id;
-  const ctx = getContext(); await ctx.resume();
-  if (my !== generation || !buffer || selected?.id !== trackId) return;
-  const offset = Math.max(0, Math.min(buffer.duration - .02, Number(position) || 0));
-  const s = { type: 'preview', offset, when: ctx.currentTime + .035, end: buffer.duration, paused: false, mode: 'preview' };
-  session = s; previewOffset = offset;
-  createSource(offset, s.when, s.end, s);
-  ui.previewBtn.textContent = '■ 음원 멈추기';
-  ui.stageStatus.textContent = '음원 확인 중'; ui.count.textContent = 'LISTEN'; ui.count.className = 'big-count idle';
-  ui.message.textContent = '마디의 첫 박을 찾아 주세요.'; ui.submessage.textContent = '정확한 첫 박에서 [듣는 지점을 첫 박으로]를 눌러요.';
-  updateControls(); frame();
+function renderGrid() {
+  ui.bpm.value = String(selected?.bpm || 96);
+  ui.offset.value = String(selected?.offset || 0);
+  ui.gridBadge.textContent = (selected?.bpm || 96) + ' BPM · 4박';
+  ui.gridNote.textContent = selected?.bpm ? '저장된 박자예요. 첫 마디 첫 박이 맞는지 들어서 확인해 주세요.' : '96 BPM은 기본값이에요. 곡의 BPM과 초반 첫 마디의 첫 박을 확인해 주세요.';
 }
-function stopPlayback() {
-  if (session) previewOffset = currentPosition();
-  clearPlayback(); ui.previewBtn.textContent = '▶ 음원 듣기';
-  readyStage('잠시 멈췄어요.'); updateControls(); updatePreviewUI(); drawWaveform();
-}
-function isPositionHidden() {
-  return session?.type === 'training' && (ui.hidePosition.checked || session.mode === 'recall') && !revealed;
-}
-function updatePreviewUI() {
-  const hidden = isPositionHidden();
-  ui.previewTime.textContent = hidden ? '••:••' : fmt(previewOffset, true);
-  ui.seek.style.visibility = hidden ? 'hidden' : '';
-  ui.seek.disabled = !buffer || hidden;
-  if (!hidden) ui.seek.value = previewOffset;
-}
-function hidePositionInfo() {
-  revealed = false;
-  ui.revealBtn.classList.remove('revealed');
-  ui.revealBtn.textContent = '시작 위치 숨김 · 눌러서 확인';
-}
-function revealPosition() {
-  if (!lastPlan) return;
-  revealed = true; ui.revealBtn.classList.add('revealed');
-  ui.revealBtn.textContent = '가사 시작 ' + fmt(lastPlan.target, true) + ' · 재생 ' + fmt(lastPlan.start, true) + (lastPlan.label ? ' · ' + lastPlan.label : '');
-  updatePreviewUI(); drawWaveform();
-}
-function trainingPlans() {
-  if (!selected || !buffer) return [];
-  const plans = buildTargets({
-    duration: buffer.duration, bpm: selected.bpm, beatsPerBar: selected.beatsPerBar,
-    offset: selected.offset || 0, rangeStart: Number(ui.rangeStart.value), rangeEnd: Number(ui.rangeEnd.value),
-    lengthBars: Number(ui.lengthBars.value), preRollBars: Number(ui.preRollBars.value)
-  });
-  if (ui.targetType.value === 'markers') {
-    const b = barSeconds(selected.bpm, selected.beatsPerBar);
-    return plans.filter(p => selected.markers.some(m => Math.abs(m.target - p.target) < b * .08)).map(p => ({ ...p, label: selected.markers.find(m => Math.abs(m.target - p.target) < b * .08)?.name }));
-  }
-  return plans;
-}
-function activeWeaknesses() { return (selected?.practice || []).filter(p => p.misses > 0 && (p.streak || 0) < 2); }
-function eligibleWeakPlans(plans) {
-  const weak = activeWeaknesses(), b = barSeconds(selected.bpm, selected.beatsPerBar);
-  return plans.filter(plan => weak.some(p => Math.abs(p.target - plan.target) <= b / 2));
-}
-async function startTraining(replay = false, forcePlan = null, round = 1, frozen = null) {
-  if (!selected || !buffer || !selected.bpm) return;
-  const plans = trainingPlans();
-  if (!plans.length) throw new Error(ui.targetType.value === 'markers' ? '이 범위에서 재생 가능한 저장 구간이 없어요. 구간을 저장하거나 시작 기준을 모든 마디로 바꿔 주세요.' : '연습 범위가 짧아요. 범위를 넓히거나 연습 길이·미리 듣기를 줄여 주세요.');
-  const requestedMode = frozen?.mode || mode;
-  if (requestedMode === 'gap' && Number(ui.lengthBars.value) < 4) throw new Error('반주 공백은 연습 길이 4마디 이상에서 시작할 수 있어요.');
-  let candidates = requestedMode === 'weak' ? eligibleWeakPlans(plans) : plans;
-  if (!candidates.length && requestedMode === 'weak') throw new Error('현재 범위에는 약점 구간이 없어요. 랜덤 연습에서 막힘을 체크하면 이곳에서 복습할 수 있어요.');
-  let plan = forcePlan || (replay ? lastPlan : pickTarget(candidates, { lastTarget: lastPlan?.target }));
-  if (!plan) throw new Error('먼저 연습 구간을 골라 주세요.');
-  // Revalidate stored plans after ranges or calibration change.
-  plan = plans.find(p => Math.abs(p.target - plan.target) < .015) || (forcePlan && frozen ? forcePlan : null);
-  if (!plan || plan.end > buffer.duration || plan.start < 0) throw new Error('이 구간은 현재 설정에 맞지 않아요. 새 연습을 시작해 주세요.');
-  const trackId = selected.id;
-  clearPlayback();
-  const my = generation, ctx = getContext();
-  await ctx.resume();
-  if (my !== generation || selected?.id !== trackId) return;
-  const bar = barSeconds(selected.bpm, selected.beatsPerBar), delay = Number(ui.countdown.value);
-  lastPlan = { ...plan }; hidePositionInfo();
-  if (!ui.hidePosition.checked && requestedMode !== 'recall') revealPosition();
-  if (ui.autoHideLyrics.checked || requestedMode === 'recall' || requestedMode === 'stage') hideLyrics();
-  const when = ctx.currentTime + (delay > 0 ? delay : .035);
-  const s = {
-    type: 'training', mode: requestedMode, plan, offset: plan.start, when, end: plan.end, bar,
-    paused: false, round, trackId, totalRounds: requestedMode === 'loop' ? 3 : 1,
-    gapStart: plan.target + bar * Math.floor(Number(ui.lengthBars.value) / 2),
-    gapEnd: plan.target + bar * (Math.floor(Number(ui.lengthBars.value) / 2) + 1),
-    started: false, targetSeen: false, lastBeat: -1
-  };
-  lastTrial = { trackId, target: plan.target, rated: false, reachedTarget: false };
-  session = s; previewOffset = plan.start; updatePreviewUI(); drawWaveform();
-  createSource(plan.start, when, plan.end, s);
-  ui.previewBtn.textContent = '▶ 음원 듣기';
-  ui.roundLabel.textContent = requestedMode === 'loop' ? round + ' / 3 REPEATS' : 'ON YOUR BEAT';
-  ui.stageStatus.textContent = delay > 0 ? '준비 시간' : '미리 듣기';
-  ui.count.className = 'big-count'; ui.count.textContent = delay > 0 ? String(delay) : '1';
-  ui.message.textContent = delay > 0 ? '숨 고르고, 귀를 열어요.' : '한 마디 듣고 들어가요.';
-  ui.submessage.textContent = Number(ui.preRollBars.value) + '마디 미리 듣기 후 GO에 맞춰 가사 시작';
-  ui.progressBar.style.width = '0%'; updateControls(); frame();
-}
-function frame() {
-  if (!session || session.paused || !context) return;
-  const s = session, remaining = s.when - context.currentTime;
-  if (remaining > 0) {
-    if (s.type === 'training') {
-      ui.count.textContent = String(Math.max(1, Math.ceil(remaining)));
-      ui.stageStatus.textContent = '준비 시간'; setBeat(-1);
-    }
+function renderTracks() {
+  ui.trackSelect.replaceChildren();
+  if (!tracks.length) {
+    const option = document.createElement('option'); option.value = ''; option.textContent = '음원을 추가해 주세요'; ui.trackSelect.append(option);
   } else {
-    const position = currentPosition();
-    previewOffset = position; updatePreviewUI();
-    if (s.type === 'training') {
-      if (!s.started) { s.started = true; stats.attempts++; saveStats(); }
-      const beatSeconds = 60 / selected.bpm;
-      const index = Math.floor((position - selected.offset + .015) / beatSeconds);
-      setBeat(((index % selected.beatsPerBar) + selected.beatsPerBar) % selected.beatsPerBar);
-      if (position < s.plan.target - .005) {
-        const left = Math.max(1, Math.ceil((s.plan.target - position - .01) / beatSeconds));
-        ui.stageStatus.textContent = '미리 듣기 · 박자 잡기';
-        ui.count.className = 'big-count'; ui.count.textContent = String(left);
-        ui.message.textContent = '다음 첫 박부터 가사를 시작해요.';
-      } else {
-        if (!s.targetSeen) {
-          s.targetSeen = true; lastTrial.reachedTarget = true; updateControls();
-        }
-        const elapsed = position - s.plan.target;
-        ui.stageStatus.textContent = '가사 연습 중';
-        if (s.mode === 'gap' && position >= s.gapStart && position < s.gapEnd) {
-          ui.count.className = 'big-count cue'; ui.count.textContent = '계속';
-          ui.message.textContent = '반주 없이도 박자를 유지해요.';
-          ui.submessage.textContent = '한 마디 뒤에 반주가 돌아와요. 멈추지 말고 이어 불러요.';
-        } else if (s.mode === 'stage' && elapsed > s.bar * .5) {
-          const cues = ['정면','왼쪽','오른쪽','멀리'];
-          const cue = Math.floor(elapsed / (s.bar * 2)) % cues.length;
-          ui.count.className = 'big-count cue'; ui.count.textContent = cues[cue];
-          ui.message.textContent = '그쪽 관객을 보며 이어 불러요.';
-          ui.submessage.textContent = '눈은 관객에게, 박자는 몸에 남겨두세요.';
-        } else {
-          ui.count.className = 'big-count'; ui.count.textContent = elapsed < beatSeconds ? 'GO' : String(Math.floor(elapsed / s.bar) + 1);
-          ui.message.textContent = s.mode === 'gap' && position >= s.gapEnd ? '반주가 돌아왔어요. 박자가 맞나요?' : '기억한 가사를 자연스럽게 이어가요.';
-          ui.submessage.textContent = s.mode === 'recall' ? '막혔을 때만 가사 노트를 열어 확인해요.' : '흐름이 끊겨도 박자를 놓치지 말고 다음 가사로.';
-        }
-      }
-      const percent = Math.min(100, Math.max(0, (position - s.plan.start) / (s.plan.end - s.plan.start) * 100));
-      ui.progressBar.style.width = percent + '%';
-    } else if (selected?.bpm) {
-      const index = Math.floor((position - selected.offset) / (60 / selected.bpm));
-      setBeat(((index % selected.beatsPerBar) + selected.beatsPerBar) % selected.beatsPerBar);
-    }
-    drawWaveform();
-  }
-  raf = requestAnimationFrame(frame);
-}
-function finishSession(s) {
-  if (s.type === 'training' && !s.targetSeen) {
-    // Background tabs can skip UI frames; the audio still reached its scheduled end.
-    s.targetSeen = true;
-    if (lastTrial?.trackId === s.trackId) lastTrial.reachedTarget = true;
-    if (!s.started) { stats.attempts++; saveStats(); }
-  }
-  previewOffset = s.end;
-  clearPlayback(); ui.previewBtn.textContent = '▶ 음원 듣기'; updatePreviewUI(); drawWaveform();
-  if (s.type === 'preview') { readyStage('음원 확인을 마쳤어요.'); return; }
-  if (s.mode === 'loop' && s.round < s.totalRounds && selected?.id === s.trackId) {
-    // Each repetition gets the same audible pre-roll and selected countdown.
-    act(() => startTraining(true, s.plan, s.round + 1, s))();
-    return;
-  }
-  ui.count.textContent = 'DONE'; ui.count.className = 'big-count idle';
-  ui.stageStatus.textContent = '구간 완료'; ui.message.textContent = '이번 구간, 잘 이어졌나요?';
-  ui.submessage.textContent = '성공 또는 막힘을 체크하세요. 막힌 구간은 약점 복습에 모아둘게요.';
-  ui.progressBar.style.width = '100%'; setBeat(-1); updateControls();
-}
-function pauseSession() {
-  if (!session) return;
-  if (session.paused) { act(resumeSession)(); return; }
-  const s = session;
-  s.remainingDelay = Math.max(0, s.when - context.currentTime);
-  previewOffset = currentPosition();
-  ++generation;
-  if (source) { source.onended = null; try { source.stop(); } catch {} source.disconnect(); source = null; }
-  if (gain) { gain.disconnect(); gain = null; }
-  for (const node of clickNodes) { try { node.stop(); } catch {} node.disconnect(); } clickNodes = [];
-  cancelAnimationFrame(raf); s.paused = true; s.offset = previewOffset;
-  ui.stageStatus.textContent = '일시정지'; ui.pauseBtn.textContent = '▶ 재개'; updateControls();
-}
-async function resumeSession() {
-  const s = session;
-  if (!s?.paused || !buffer) return;
-  const my = generation; await getContext().resume();
-  if (my !== generation || session !== s) return;
-  if (s.offset >= s.end - .01) { finishSession(s); return; }
-  s.paused = false; s.when = context.currentTime + (s.remainingDelay > 0 ? s.remainingDelay : .035); s.remainingDelay = 0;
-  createSource(s.offset, s.when, s.end, s);
-  ui.pauseBtn.textContent = 'Ⅱ 일시정지'; updateControls(); frame();
-}
-async function rateTrial(success) {
-  if (!selected || !lastTrial || lastTrial.rated || !lastTrial.reachedTarget || lastTrial.trackId !== selected.id) return;
-  lastTrial.rated = true; updateControls();
-  const target = lastTrial.target, b = barSeconds(selected.bpm, selected.beatsPerBar);
-  let row = selected.practice.find(p => Math.abs(p.target - target) < Math.min(.08, b / 10));
-  if (!row) { row = { target, misses: 0, successes: 0, streak: 0 }; selected.practice.push(row); }
-  if (success) { row.successes++; row.streak = (row.streak || 0) + 1; stats.successes++; }
-  else { row.misses++; row.streak = 0; stats.misses++; }
-  row.updatedAt = Date.now(); saveStats();
-  await persist(); renderMarkers();
-  toast(success ? (row.misses > 0 && row.streak >= 2 ? '두 번 연속 성공! 약점 복습에서 졸업했어요.' : '성공으로 기록했어요.') : '약점 구간으로 저장했어요. 같은 구간을 다시 연습해 보세요.');
-}
-function hideLyrics() {
-  ui.lyricsHidden.hidden = false; ui.lyricsView.hidden = true; ui.lyricsEdit.hidden = true;
-  ui.toggleLyricsBtn.textContent = '가사 보기';
-}
-function showLyrics() {
-  if (!selected) return;
-  if (!ui.lyricsView.hidden) { hideLyrics(); return; }
-  ui.lyricsView.textContent = selected.lyrics || '저장된 가사가 없어요. 편집을 눌러 붙여넣어 주세요.';
-  ui.lyricsHidden.hidden = true; ui.lyricsEdit.hidden = true; ui.lyricsView.hidden = false;
-  ui.toggleLyricsBtn.textContent = '가사 숨기기';
-}
-function editLyrics() {
-  if (!selected) return;
-  ui.lyricsInput.value = selected.lyrics;
-  ui.lyricsHidden.hidden = true; ui.lyricsView.hidden = true; ui.lyricsEdit.hidden = false; ui.lyricsInput.focus();
-}
-async function saveLyrics() {
-  if (!selected) return;
-  selected.lyrics = ui.lyricsInput.value;
-  await persist(); ui.lyricsView.textContent = selected.lyrics;
-  ui.lyricsEdit.hidden = true; ui.lyricsView.hidden = false; ui.lyricsHidden.hidden = true;
-  ui.toggleLyricsBtn.textContent = '가사 숨기기'; toast('가사를 저장했어요.');
-}
-function snapTarget(position) {
-  if (!selected?.bpm) return null;
-  const bar = barSeconds(selected.bpm, selected.beatsPerBar), origin = Number(selected.offset || 0);
-  const index = Math.max(0, Math.round((position - origin) / bar));
-  return origin + index * bar;
-}
-async function addMarker() {
-  if (!selected || !buffer) return;
-  const target = snapTarget(currentPosition()), name = ui.markerName.value.trim() || '연습 구간 ' + (selected.markers.length + 1);
-  if (target >= buffer.duration) throw new Error('곡 안의 위치를 선택해 주세요.');
-  const existing = selected.markers.find(m => Math.abs(m.target - target) < .04);
-  if (existing) existing.name = name; else selected.markers.push({ name, target, id: Date.now() + '-' + Math.random().toString(36).slice(2, 7) });
-  await persist(); ui.markerName.value = ''; renderMarkers();
-  toast(fmt(target, true) + ' · 가장 가까운 마디의 첫 박에 저장했어요.');
-}
-function renderMarkers() {
-  ui.markerList.replaceChildren();
-  const weak = activeWeaknesses(); ui.weakCount.textContent = '약점 ' + weak.length + '개';
-  const rows = [
-    ...(selected?.markers || []).map(m => ({ ...m, kind: 'marker' })),
-    ...weak.filter(p => !(selected?.markers || []).some(m => Math.abs(m.target - p.target) < .04)).map(p => ({ ...p, name: '약점 구간', id: String(p.target), kind: 'weak' }))
-  ].sort((a, b) => a.target - b.target);
-  if (!rows.length) {
-    const empty = document.createElement('div'); empty.className = 'empty'; empty.textContent = '저장한 구간과 막힘 기록이 여기에 표시돼요.'; ui.markerList.append(empty);
-  }
-  for (const row of rows) {
-    const wrap = document.createElement('div'); wrap.className = 'marker-item';
-    const play = document.createElement('button'); play.className = 'marker-main';
-    const time = document.createElement('span'); time.textContent = fmt(row.target, true);
-    play.append(time, document.createTextNode(row.name));
-    play.title = '이 구간 연습';
-    play.onclick = act(() => {
-      const target = snapTarget(row.target), plans = trainingPlans();
-      const plan = plans.find(p => Math.abs(p.target - target) < .04);
-      if (!plan) throw new Error('이 구간은 현재 범위·길이 설정에서 재생할 수 없어요. 전체 곡 또는 짧은 길이를 선택해 주세요.');
-      return startTraining(false, { ...plan, label: row.name });
-    });
-    const weakness = weak.find(p => Math.abs(p.target - row.target) < .04);
-    if (weakness) { const badge = document.createElement('small'); badge.textContent = '막힘 ' + weakness.misses; wrap.append(badge); }
-    const remove = document.createElement('button'); remove.textContent = '×'; remove.setAttribute('aria-label', row.name + ' 삭제');
-    remove.onclick = act(async () => {
-      if (!selected) return;
-      if (row.kind === 'marker') selected.markers = selected.markers.filter(m => m.id !== row.id);
-      else selected.practice = selected.practice.filter(p => Math.abs(p.target - row.target) >= .04);
-      await persist(); renderMarkers();
-    });
-    wrap.prepend(play); wrap.append(remove); ui.markerList.append(wrap);
-  }
-}
-function setMode(next) {
-  clearPlayback(); readyStage(); mode = next;
-  ui.modeGrid.querySelectorAll('.mode').forEach(button => {
-    const active = button.dataset.mode === next; button.classList.toggle('active', active); button.setAttribute('aria-pressed', String(active));
-  });
-  ui.modeDescription.textContent = descriptions[next]; ui.randomBtn.innerHTML = '<span>▶</span> ' + (next === 'weak' ? '약점 복습 시작' : next === 'loop' ? '3회 반복 시작' : '연습 시작') + ' <kbd>N</kbd>';
-  if (next === 'recall' || next === 'stage') hideLyrics();
-  updateControls(); saveSettings();
-}
-function saveSettings() {
-  const value = { mode };
-  for (const id of ['countdown','preRollBars','lengthBars','targetType']) value[id] = ui[id].value;
-  for (const id of ['hidePosition','autoHideLyrics','metronome']) value[id] = ui[id].checked;
-  safeSet(SETTINGS, JSON.stringify(value));
-}
-function loadSettings() {
-  try {
-    const data = JSON.parse(safeGet(SETTINGS) || '{}');
-    for (const id of ['countdown','preRollBars','lengthBars','targetType']) if ([...ui[id].options].some(o => o.value === String(data[id]))) ui[id].value = data[id];
-    for (const id of ['hidePosition','autoHideLyrics','metronome']) if (typeof data[id] === 'boolean') ui[id].checked = data[id];
-    if (descriptions[data.mode]) mode = data.mode;
-  } catch { /* Use defaults for malformed settings. */ }
-}
-async function saveRange() {
-  clearPlayback(); lastPlan = null; lastTrial = null;
-  if (selected && buffer) {
-    const start = Number(ui.rangeStart.value), end = Number(ui.rangeEnd.value);
-    if (!Number.isFinite(start) || !Number.isFinite(end) || start < 0 || end > buffer.duration + .1 || start >= end) throw new Error('범위는 0초부터 곡 끝 사이에서, 시작보다 끝이 크게 입력해 주세요.');
-    selected.rangeStart = start; selected.rangeEnd = Math.min(end, buffer.duration); await persist();
-  }
-  readyStage(); updateSummary(); updateControls(); drawWaveform();
-}
-function updateSummary() {
-  if (!selected?.bpm || !buffer) { ui.gridSummary.textContent = '기본 설정: 3초 준비 → 1마디 미리 듣기 → 4마디 연습'; return; }
-  const bar = barSeconds(selected.bpm, selected.beatsPerBar), count = trainingPlans().length;
-  ui.gridSummary.textContent = '1마디 ' + bar.toFixed(2) + '초 · ' + ui.countdown.value + '초 준비 → ' + (Number(ui.preRollBars.value) * bar).toFixed(2) + '초 미리 듣기 → ' + (Number(ui.lengthBars.value) * bar).toFixed(2) + '초 연습 · 시작점 ' + count + '개';
-}
-function dayKey() {
-  const now = new Date();
-  return 'kenneth_practice_stats_' + now.getFullYear() + '-' + (now.getMonth() + 1) + '-' + now.getDate();
-}
-function saveStats() {
-  safeSet(dayKey(), JSON.stringify(stats));
-  for (const key of ['attempts','successes','misses']) ui[key].textContent = stats[key];
-}
-function loadStats() {
-  try {
-    const saved = JSON.parse(safeGet(dayKey()) || '{}');
-    for (const key of ['attempts','successes','misses']) stats[key] = Math.max(0, Number(saved[key]) || 0);
-  } catch {}
-  saveStats();
-}
-async function importFiles(files) {
-  if (busyImport) return;
-  busyImport = true; ui.fileInput.disabled = true; ui.storageState.textContent = '음원 저장 중…';
-  let added = 0, firstId;
-  try {
-    for (const file of [...files]) {
-      if (!(file.type.startsWith('audio/') || /\.(mp3|wav|m4a|ogg|flac|aac)$/i.test(file.name))) continue;
-      if (file.size > 150 * 1048576) { toast(file.name + '은 150MB를 넘어요. 압축한 음원을 사용해 주세요.'); continue; }
-      const id = await storeAction('add', { name: file.name, type: file.type, size: file.size, blob: file, lyrics: '', updatedAt: Date.now(), markers: [], practice: [] });
-      firstId ??= id; added++;
-    }
-    await refreshTracks();
-    if (firstId) await selectTrack(firstId);
-    if (added) toast(added + '곡을 저장했어요. 추정 박자와 첫 박을 확인해 주세요.');
-  } finally {
-    busyImport = false; ui.fileInput.disabled = false; ui.fileInput.value = ''; ui.storageState.textContent = '이 브라우저에 저장';
-  }
-}
-function makeDemoFile() {
-  const rate = 22050, seconds = 65, samples = new Float32Array(rate * seconds);
-  const bpm = 96, beat = 60 / bpm, offset = 1.25;
-  for (let t = offset, i = 0; t < seconds - 2; t += beat, i++) {
-    const start = Math.round(t * rate);
-    for (let j = 0; j < rate * .18 && start + j < samples.length; j++) {
-      const x = j / rate;
-      samples[start + j] += Math.sin(2 * Math.PI * (68 * x - 22 * x * x)) * Math.exp(-x * 32) * (i % 4 === 0 ? .6 : .38);
-      samples[start + j] += Math.sin(2 * Math.PI * 1100 * x) * Math.exp(-x * 140) * .09;
-    }
-    const freq = [130.81,155.56,174.61,155.56][Math.floor(i / 4) % 4];
-    for (let j = 0; j < rate * beat * .72 && start + j < samples.length; j++) {
-      const x = j / rate, fade = Math.min(1, x * 50) * Math.exp(-x * 7);
-      samples[start + j] += (Math.sin(2 * Math.PI * freq * x) + .25 * Math.sin(2 * Math.PI * freq * 2 * x)) * fade * .18;
+    for (const track of tracks) {
+      const option = document.createElement('option'); option.value = track.id; option.textContent = track.name || track.fileName; ui.trackSelect.append(option);
     }
   }
-  const raw = new ArrayBuffer(44 + samples.length * 2), view = new DataView(raw);
-  const text = (at, s) => [...s].forEach((v, i) => view.setUint8(at + i, v.charCodeAt(0)));
-  text(0,'RIFF'); view.setUint32(4,36 + samples.length * 2,true); text(8,'WAVE'); text(12,'fmt ');
-  view.setUint32(16,16,true); view.setUint16(20,1,true); view.setUint16(22,1,true); view.setUint32(24,rate,true); view.setUint32(28,rate * 2,true); view.setUint16(32,2,true); view.setUint16(34,16,true); text(36,'data'); view.setUint32(40,samples.length * 2,true);
-  for (let i = 0; i < samples.length; i++) view.setInt16(44 + i * 2, Math.max(-1,Math.min(1,samples[i])) * 32767, true);
-  return new File([raw], '데모 반주 · 96 BPM.wav', { type: 'audio/wav' });
+  ui.trackCount.textContent = tracks.length + '곡';
+  ui.trackSelect.disabled = !tracks.length;
+  ui.trackSelect.value = selected?.id || '';
+  ui.libraryStatus.textContent = tracks.length ? '한 번 올린 음원을 다른 기기에서도 불러와요.' : '내 곡을 올려 첫 연습을 시작해 보세요.';
+  ui.trackMeta.hidden = !selected;
+  ui.fileInfo.textContent = selected ? size(selected.bytes) : '';
+  ui.nowTitle.textContent = selected?.name || selected?.fileName || '음원을 추가해 주세요';
+  renderGrid(); renderTransport(); renderTime();
 }
-async function loadDemo() {
-  if (busyImport) return;
-  const existing = tracks.find(t => t.demo);
-  if (existing) { await selectTrack(existing.id); return; }
-  ui.demoBtn.disabled = true;
-  try {
-    const file = makeDemoFile();
-    const id = await storeAction('add', { name: file.name, type: file.type, size: file.size, blob: file, bpm:96, offset:1.25, beatsPerBar:4, demo:true, manualGrid:true, markers:[],practice:[],lyrics:'[데모 연습 안내]\n이 반주는 박자와 재생 동작을 확인하는 샘플이에요.\n\nGO가 뜨면 아는 가사를 4마디 이어 불러 보세요.\n원하는 곡의 음원을 넣으면 내 가사로 연습할 수 있어요.',updatedAt:Date.now() });
-    await refreshTracks(); await selectTrack(id); toast('96 BPM 데모예요. 첫 박은 1.250초로 맞춰 두었어요.');
-  } finally { ui.demoBtn.disabled = false; }
+function selectTrack(id) {
+  stopPlayback({ render: false }); cancelAnalysis();
+  selected = tracks.find(track => String(track.id) === String(id)) || null;
+  audio.removeAttribute('src');
+  if (selected) audio.src = trackURL(selected);
+  audio.load();
+  remember(selected?.id);
+  resetStage(); renderTracks();
+  if ('mediaSession' in navigator && typeof MediaMetadata !== 'undefined') navigator.mediaSession.metadata = selected ? new MediaMetadata({ title: selected.name || selected.fileName, artist: 'KENNETH · 랜덤 가사 연습' }) : null;
 }
-
-ui.fileInput.onchange = act(() => importFiles(ui.fileInput.files));
-ui.demoBtn.onclick = act(loadDemo);
-ui.analyzeBtn.onclick = act(analyzeTrack);
-for (const id of ['bpm','offset','beatsPerBar']) ui[id].onchange = act(saveGrid);
-ui.tapBtn.onclick = tapTempo;
-ui.markBeatBtn.onclick = act(async () => { ui.offset.value = currentPosition().toFixed(3); await saveGrid(); toast('이 지점을 기준 마디의 첫 박으로 저장했어요.'); });
-for (const [id, delta] of [['nudgeBackBtn',-.01],['nudgeNextBtn',.01]]) ui[id].onclick = act(async () => { ui.offset.value = Math.max(0, Number(ui.offset.value) + delta).toFixed(3); await saveGrid(); });
-ui.modeGrid.querySelectorAll('.mode').forEach(button => button.onclick = () => setMode(button.dataset.mode));
-ui.randomBtn.onclick = act(() => startTraining());
-ui.replayBtn.onclick = act(() => startTraining(true));
-ui.pauseBtn.onclick = pauseSession; ui.stopBtn.onclick = stopPlayback; ui.revealBtn.onclick = revealPosition;
-ui.previewBtn.onclick = act(() => session?.type === 'preview' ? stopPlayback() : startPreview());
-ui.seek.oninput = act(async () => {
-  const position = Number(ui.seek.value), playingPreview = session?.type === 'preview' && !session.paused;
-  if (session?.type === 'training') { clearPlayback(); readyStage(); }
-  previewOffset = position; updatePreviewUI(); drawWaveform();
-  if (playingPreview) await startPreview(position);
-});
-ui.waveform.onclick = act(async event => {
-  if (!buffer) return;
-  const rect = ui.waveform.getBoundingClientRect(), position = Math.max(0,Math.min(buffer.duration - .02,(event.clientX - rect.left) / rect.width * buffer.duration));
-  const playingPreview = session?.type === 'preview' && !session.paused;
-  if (session) { clearPlayback(); readyStage(); }
-  previewOffset = position; updatePreviewUI(); drawWaveform();
-  if (playingPreview) await startPreview(position);
-});
-ui.successBtn.onclick = act(() => rateTrial(true)); ui.missBtn.onclick = act(() => rateTrial(false));
-ui.toggleLyricsBtn.onclick = showLyrics; ui.editLyricsBtn.onclick = editLyrics; ui.saveLyricsBtn.onclick = act(saveLyrics);
-ui.addMarkerBtn.onclick = act(addMarker);
-ui.clearWeakBtn.onclick = act(async () => {
-  if (!selected || !confirm('이 곡의 약점·성공 기록을 초기화할까요? 저장한 구간과 가사는 유지돼요.')) return;
-  selected.practice = []; await persist(); renderMarkers(); toast('약점 기록을 초기화했어요.');
-});
-ui.resetStatsBtn.onclick = () => {
-  if (!confirm('오늘의 시도·성공·막힘 집계를 초기화할까요? 곡별 약점 기록은 유지돼요.')) return;
-  stats = {attempts:0,successes:0,misses:0}; saveStats();
-};
-for (const id of ['countdown','preRollBars','lengthBars','targetType']) ui[id].onchange = () => {
-  clearPlayback(); lastPlan = null; lastTrial = null; readyStage(); saveSettings(); updateSummary(); updateControls();
-};
-for (const id of ['hidePosition','autoHideLyrics','metronome']) ui[id].onchange = () => {
-  // A changed click setting is applied to the next play; existing scheduled clicks are canceled.
-  if (id === 'metronome' && session) stopPlayback();
-  if (id === 'hidePosition') { hidePositionInfo(); if (!ui.hidePosition.checked && mode !== 'recall') revealPosition(); updatePreviewUI(); drawWaveform(); }
-  saveSettings();
-};
-ui.rangeStart.onchange = act(saveRange); ui.rangeEnd.onchange = act(saveRange);
-ui.fullRangeBtn.onclick = act(async () => { if (!buffer) return; ui.rangeStart.value=0; ui.rangeEnd.value=buffer.duration.toFixed(1); await saveRange(); });
-document.addEventListener('keydown', event => {
-  if (event.ctrlKey || event.metaKey || event.altKey || event.repeat || ['INPUT','TEXTAREA','SELECT'].includes(document.activeElement?.tagName)) return;
-  if (document.activeElement?.tagName === 'BUTTON' && ['Space','Enter'].includes(event.code)) return;
-  const actions = { KeyN: () => !ui.randomBtn.disabled && act(() => startTraining())(), KeyR: () => !ui.replayBtn.disabled && act(() => startTraining(true))(), KeyL: showLyrics, KeyP: revealPosition, Digit1: () => !ui.successBtn.disabled && act(() => rateTrial(true))(), Digit2: () => !ui.missBtn.disabled && act(() => rateTrial(false))(), Space: pauseSession };
-  if (actions[event.code]) { event.preventDefault(); actions[event.code](); }
-});
-window.addEventListener('pagehide', () => { clearPlayback(); cancelAnalysis(); resetTaps(); });
-(async () => {
+function cancelUploads() {
+  uploadGeneration += 1; uploadXHR?.abort(); uploadXHR = null;
+  uploading = false; uploadQueue = [];
+  ui.fileInput.disabled = false; ui.uploadLabel.classList.remove('busy'); ui.retryUploadBtn.hidden = true;
+}
+function showLogin(message = '') {
+  authGeneration += 1;
+  stopPlayback(); cancelAnalysis(); cancelUploads();
+  selected = null; tracks = []; audio.removeAttribute('src'); audio.load(); localFiles.clear();
+  ui.workspace.hidden = true; ui.servicePanel.hidden = true; ui.loginPanel.hidden = false; ui.logoutBtn.hidden = true;
+  ui.loginMessage.textContent = message;
+}
+async function loadTracks(token = authGeneration) {
+  ui.retryTracksBtn.hidden = true; ui.libraryStatus.textContent = '음원을 불러오고 있어요.';
   try {
-    loadSettings(); loadStats();
-    db = await openDB(); await refreshTracks();
-    setMode(mode);
-    const id = Number(safeGet(selectedKey)), first = tracks.find(t => t.id === id) || tracks[0];
-    if (first) await selectTrack(first.id);
-    else { renderMarkers(); updateControls(); }
+    const result = await api('/tracks');
+    if (token !== authGeneration) return;
+    tracks = Array.isArray(result.tracks) ? result.tracks : [];
+    const id = selected?.id || remembered();
+    selectTrack(tracks.some(track => track.id === id) ? id : tracks[0]?.id);
   } catch (error) {
-    ui.storageState.textContent = '브라우저 저장소 오류';
-    ui.message.textContent = '브라우저 저장소를 열지 못했어요.';
-    ui.submessage.textContent = '일반 브라우저 탭에서 열고, 사이트 저장 권한을 확인해 주세요.';
-    ui.fileInput.disabled = true; ui.demoBtn.disabled = true; reportError(error);
+    if (token !== authGeneration || error.status === 401) return;
+    ui.libraryStatus.textContent = error.message; ui.retryTracksBtn.hidden = false;
   }
-})();
+}
+async function initialize() {
+  const token = ++authGeneration;
+  ui.servicePanel.hidden = false; ui.loginPanel.hidden = true; ui.workspace.hidden = true; ui.reloadBtn.hidden = true;
+  ui.serviceTitle.textContent = '내 연습실을 불러오고 있어요.'; ui.serviceMessage.textContent = '잠시만 기다려 주세요.';
+  try {
+    const status = await api('/status');
+    if (token !== authGeneration) return;
+    maxUploadBytes = Number(status.maxUploadBytes) || 80 * 1048576;
+    ui.uploadLimit.textContent = String(Math.floor(maxUploadBytes / 1048576));
+    if (!status.configured || !status.storageReady) {
+      ui.serviceTitle.textContent = '연습실을 준비하고 있어요.';
+      ui.serviceMessage.textContent = '음원 저장 연결이 완료되면 이곳에서 바로 연습할 수 있어요.';
+      ui.reloadBtn.hidden = false; return;
+    }
+    if (!status.authenticated) { showLogin(); return; }
+    ui.servicePanel.hidden = true; ui.loginPanel.hidden = true; ui.workspace.hidden = false; ui.logoutBtn.hidden = false;
+    await loadTracks(token);
+  } catch (error) {
+    if (token !== authGeneration) return;
+    ui.serviceTitle.textContent = '연습실에 연결하지 못했어요.'; ui.serviceMessage.textContent = error.message; ui.reloadBtn.hidden = false;
+  }
+}
+async function login(event) {
+  event.preventDefault(); ui.loginBtn.disabled = true; ui.loginMessage.textContent = '';
+  const token = authGeneration;
+  try {
+    await api('/login', { method: 'POST', body: { password: ui.password.value } });
+    ui.password.value = '';
+    if (token === authGeneration) await initialize();
+  } catch (error) { ui.loginMessage.textContent = error.message; }
+  finally { ui.loginBtn.disabled = false; }
+}
+async function logout() {
+  authGeneration += 1;
+  stopPlayback(); cancelAnalysis(); cancelUploads();
+  ui.logoutBtn.disabled = true;
+  try { await api('/logout', { method: 'POST' }); showLogin(); }
+  catch (error) { report(error); }
+  finally { ui.logoutBtn.disabled = false; }
+}
+function currentResource() { return !!selected && audio.currentSrc === trackURL(selected); }
+function active(token, current) { return token === generation && session === current; }
+function blocked(current, token, error, resumeFrom) {
+  if (!active(token, current)) return;
+  clearClock(); audio.muted = false; audio.pause();
+  current.phase = 'blocked'; current.resumeFrom = resumeFrom;
+  setStage('한 번 더 눌러 주세요', '▶', '이어 재생을 누르면 시작해요.', error?.name === 'NotAllowedError' ? '브라우저가 자동 재생을 막았어요. 아래 버튼으로 재생해 주세요.' : '음원을 재생하지 못했어요. 연결을 확인한 뒤 이어 재생을 눌러 주세요.');
+  ui.playbackMessage.textContent = '이어 재생 버튼을 누르면 같은 시작점에서 계속합니다.'; renderTransport();
+}
+function startAudio(current, token) {
+  if (!active(token, current)) return;
+  current.phase = 'starting'; audio.muted = false; renderTransport();
+  let promise;
+  try { promise = audio.play(); } catch (error) { blocked(current, token, error, 'audio'); return; }
+  Promise.resolve(promise).then(() => {
+    if (!active(token, current)) return;
+    current.phase = current.type === 'preview' ? 'preview' : 'preroll';
+    ui.playbackMessage.textContent = '시작한 음원은 곡 끝까지 계속 재생합니다. 준비할 때는 화면을 켜 두세요.';
+    if ('mediaSession' in navigator) navigator.mediaSession.playbackState = 'playing';
+    renderTransport(); paintPlayback();
+  }).catch(error => blocked(current, token, error, 'audio'));
+}
+function countdownTick(current, token) {
+  if (!active(token, current) || current.phase !== 'countdown') return;
+  current.remaining = Math.max(0, current.deadline - now());
+  if (current.remaining <= 0) { countdownTimer = 0; startAudio(current, token); return; }
+  setStage('곧 시작해요', String(Math.ceil(current.remaining / 1000)), '한 마디 듣고, GO에 맞춰 들어가요.', '시작점 ' + fmt(current.plan.target) + ' · 한 마디 미리 듣기');
+  countdownTimer = setTimeout(() => countdownTick(current, token), Math.min(100, current.remaining));
+}
+function beginCountdown(current, token) {
+  current.phase = 'countdown'; current.deadline = now() + current.remaining;
+  ui.playbackMessage.textContent = '3초 준비 중에는 화면을 켜 두세요. 이후 곡 끝까지 재생됩니다.';
+  renderTransport(); countdownTick(current, token);
+}
+// Called directly by a click handler: the first play() occurs within the user gesture.
+function unlockForCountdown(current, token) {
+  current.phase = 'unlock'; audio.muted = true;
+  setStage('음원 준비 중', '…', '재생을 준비하고 있어요.', '준비가 끝나면 3초 카운트다운이 시작됩니다.'); renderTransport();
+  let promise;
+  try { promise = audio.play(); } catch (error) { blocked(current, token, error, 'countdown'); return; }
+  Promise.resolve(promise).then(() => {
+    if (!active(token, current)) return;
+    audio.pause(); audio.currentTime = current.plan.start; audio.muted = false;
+    renderTime(); beginCountdown(current, token);
+  }).catch(error => blocked(current, token, error, 'countdown'));
+}
+function startTraining() {
+  if (!selected) return;
+  let plan;
+  try {
+    plan = pickTarget(buildTargets({ duration: duration(), bpm: selected.bpm || 96, offset: selected.offset || 0 }), { lastTarget: lastTargets.get(selected.id) });
+  } catch { toast('한 마디를 먼저 들을 수 있는 길이가 필요해요. 곡 길이와 박자 설정을 확인해 주세요.'); return; }
+  stopPlayback({ resetPosition: false, render: false });
+  const token = generation;
+  session = { type: 'training', phase: 'unlock', plan, remaining: 3000, bpm: selected.bpm || 96 };
+  lastTargets.set(selected.id, plan.target);
+  ui.startInfo.textContent = '시작점 ' + fmt(plan.target) + ' → 곡 끝까지';
+  unlockForCountdown(session, token);
+  if (matchMedia('(max-width: 780px)').matches) ui.count.scrollIntoView?.({ behavior: 'smooth', block: 'center' });
+}
+function pausePlayback() {
+  if (!session || ['paused','blocked'].includes(session.phase)) return;
+  const current = session;
+  if (current.phase === 'countdown') current.remaining = Math.max(0, current.deadline - now());
+  current.resumeFrom = current.phase === 'countdown' || current.phase === 'unlock' ? 'countdown' : 'audio';
+  generation += 1; clearClock(); current.phase = 'paused';
+  audio.pause(); audio.muted = false;
+  if ('mediaSession' in navigator) navigator.mediaSession.playbackState = 'paused';
+  setStage('잠시 쉬어가요', 'Ⅱ', '이어 재생으로 계속해요.', current.resumeFrom === 'countdown' ? '남은 준비 시간부터 이어집니다.' : fmt(audio.currentTime) + '에서 계속합니다.'); renderTransport(); renderTime();
+}
+function resumePlayback() {
+  if (!session || !['paused','blocked'].includes(session.phase)) return;
+  const current = session, token = ++generation;
+  if (current.resumeFrom === 'countdown') unlockForCountdown(current, token);
+  else startAudio(current, token);
+}
+function togglePause() { if (session && ['paused','blocked'].includes(session.phase)) resumePlayback(); else pausePlayback(); }
+function startPreview() {
+  if (!selected) return;
+  stopPlayback({ render: false });
+  session = { type: 'preview', phase: 'starting' };
+  ui.startInfo.textContent = '첫 마디 첫 박을 들어서 확인해 주세요.';
+  startAudio(session, generation);
+}
+function paintPlayback() {
+  cancelAnimationFrame(frame); frame = 0;
+  if (!session || !['preroll','playing','preview'].includes(session.phase)) return;
+  renderTime();
+  if (session.type === 'preview') {
+    setStage('박자 확인 중', '♫', '첫 마디 첫 박을 찾아 주세요.', '원하는 위치에서 ‘지금 위치를 첫 박으로’를 누르세요.');
+  } else {
+    const remaining = session.plan.target - audio.currentTime;
+    const beat = 60 / session.bpm;
+    if (remaining > 0.002) {
+      session.phase = 'preroll';
+      const count = Math.min(4, Math.max(1, Math.ceil(remaining / beat)));
+      setStage('한 마디 미리 듣기', String(count), '박자를 듣고, 다음 첫 박에 들어가요.', 'GO부터 곡 끝까지 이어 불러요.');
+      Array.from(ui.beatDots.children).forEach((dot, index) => dot.classList.toggle('active', index === 4 - count));
+    } else {
+      session.phase = 'playing';
+      setStage('내 가사로 이어가기', remaining > -beat ? 'GO' : '♫', '멈추지 말고, 곡 끝까지.', '막혔다면 다시 랜덤 버튼을 눌러 연습해 보세요.');
+      Array.from(ui.beatDots.children).forEach(dot => dot.classList.remove('active'));
+    }
+  }
+  frame = requestAnimationFrame(paintPlayback);
+}
+function ended() {
+  if (!audio.ended || !currentResource()) return;
+  if (!session || !['preroll','playing','preview','starting'].includes(session.phase)) return;
+  const wasTraining = session.type === 'training';
+  generation += 1; clearClock(); session = null; audio.muted = false;
+  if ('mediaSession' in navigator) navigator.mediaSession.playbackState = 'none';
+  setStage('끝까지 왔어요', 'DONE', wasTraining ? '다른 시작점도 연습해 볼까요?' : '박자를 확인했다면 랜덤으로 시작해요.', '버튼을 누를 때 다음 연습이 시작됩니다.', true);
+  Array.from(ui.beatDots.children).forEach(dot => dot.classList.remove('active'));
+  renderTransport(); renderTime();
+}
+function seekTo(value) {
+  if (!selected || duration() <= 0) return;
+  const playing = session && !audio.paused && ['preroll','playing','preview'].includes(session.phase);
+  stopPlayback({ resetPosition: false, render: false });
+  audio.currentTime = Math.max(0, Math.min(duration(), Number(value) || 0));
+  if (playing) { session = { type: 'preview', phase: 'starting' }; startAudio(session, generation); }
+  else { resetStage(); renderTransport(); renderTime(); }
+}
+async function patchTrack(track, fields) {
+  const token = authGeneration;
+  // Keep writes ordered per song so a manual grid save follows an in-flight estimate.
+  const write = (metadataWrites.get(track.id) || Promise.resolve()).catch(() => {}).then(async () => {
+    if (token !== authGeneration || !tracks.includes(track)) return false;
+    await api('/tracks/' + encodeURIComponent(track.id), { method: 'PATCH', body: fields });
+    if (token !== authGeneration || !tracks.includes(track)) return false;
+    // Merge only this request's fields: a late duration response cannot overwrite BPM.
+    Object.assign(track, fields);
+    return true;
+  });
+  metadataWrites.set(track.id, write);
+  try { return await write; } finally { if (metadataWrites.get(track.id) === write) metadataWrites.delete(track.id); }
+}
+async function saveGrid(event) {
+  event?.preventDefault();
+  if (!selected) return;
+  const track = selected, bpm = Number(ui.bpm.value), offset = Number(ui.offset.value);
+  if (!Number.isFinite(bpm) || bpm < 40 || bpm > 240 || !Number.isFinite(offset) || offset < 0 || duration() > 0 && offset >= duration()) { toast('BPM은 40~240, 첫 박은 곡이 끝나기 전의 시간으로 입력해 주세요.'); return; }
+  cancelAnalysis(); gridRevisions.set(track.id, (gridRevisions.get(track.id) || 0) + 1); stopPlayback(); ui.saveGridBtn.disabled = true;
+  try { if (await patchTrack(track, { bpm, offset })) { if (selected === track) renderGrid(); toast('박자를 저장했어요.'); } }
+  catch (error) { report(error); }
+  finally { renderTransport(); }
+}
+async function deleteTrack() {
+  if (!selected || !confirm('이 공유 연습실에서 ‘' + (selected.name || selected.fileName) + '’ 음원을 삭제할까요?')) return;
+  const track = selected, token = authGeneration;
+  stopPlayback(); cancelAnalysis(); ui.deleteBtn.disabled = true;
+  try {
+    await api('/tracks/' + encodeURIComponent(track.id), { method: 'DELETE' });
+    if (token !== authGeneration) return;
+    tracks = tracks.filter(item => item !== track); localFiles.delete(track.id); lastTargets.delete(track.id);
+    selectTrack(selected === track ? tracks[0]?.id : selected?.id);
+    toast('공유 연습실에서 음원을 삭제했어요.');
+  } catch (error) { report(error); renderTransport(); }
+}
+function rawUpload(file, token) {
+  return new Promise((resolve, reject) => {
+    const xhr = new XMLHttpRequest(); uploadXHR = xhr;
+    xhr.open('POST', API + '/tracks'); xhr.withCredentials = true; xhr.timeout = 300000;
+    xhr.setRequestHeader('Content-Type', file.type || 'application/octet-stream');
+    xhr.setRequestHeader('X-File-Name', encodeURIComponent(file.name));
+    xhr.setRequestHeader('X-File-Size', String(file.size));
+    xhr.upload.onprogress = event => {
+      if (token !== uploadGeneration) return;
+      const progress = event.lengthComputable ? Math.min(100, Math.round(event.loaded / event.total * 100)) : 0;
+      ui.uploadProgress.value = progress; ui.uploadPercent.textContent = progress + '%';
+      if (progress === 100) ui.uploadMessage.textContent = '음원을 저장하고 있어요. 잠시만 기다려 주세요.';
+    };
+    xhr.onload = () => {
+      if (token !== uploadGeneration) { reject(abortError()); return; }
+      if (uploadXHR === xhr) uploadXHR = null;
+      let data;
+      try { data = JSON.parse(xhr.responseText); } catch { reject(new Error('업로드 응답을 읽지 못했어요. 다시 시도해 주세요.')); return; }
+      if (xhr.status === 401) showLogin('로그인이 만료됐어요. 다시 로그인해 주세요.');
+      if (xhr.status < 200 || xhr.status >= 300 || data.ok === false || !data.track) { reject(new Error(data.error || '음원을 저장하지 못했어요. 다시 시도해 주세요.')); return; }
+      resolve(data.track);
+    };
+    xhr.onerror = () => reject(new Error('연결이 끊겼어요. 같은 파일로 다시 시도해 주세요.'));
+    xhr.ontimeout = () => reject(new Error('업로드 시간이 초과됐어요. 연결을 확인하고 다시 시도해 주세요.'));
+    xhr.onabort = () => reject(abortError());
+    xhr.send(file);
+  });
+}
+async function processUploads() {
+  if (uploading || !uploadQueue.length) return;
+  const token = ++uploadGeneration;
+  uploading = true; ui.fileInput.disabled = true; ui.uploadLabel.classList.add('busy'); ui.retryUploadBtn.hidden = true; ui.uploadPanel.hidden = false;
+  try {
+    while (uploadQueue.length && token === uploadGeneration) {
+      const entry = uploadQueue[0], file = entry.file;
+      ui.uploadName.textContent = file.name; ui.uploadProgress.value = 0; ui.uploadPercent.textContent = '0%'; ui.uploadMessage.textContent = '음원을 업로드하고 있어요.';
+      const track = await rawUpload(file, token);
+      if (token !== uploadGeneration) return;
+      tracks.unshift(track); localFiles.set(track.id, file); uploadQueue.shift();
+      if (entry.grid && entry.grid.bpm >= 40 && entry.grid.bpm <= 240) {
+        try { await patchTrack(track, entry.grid); } catch { toast('음원은 올렸어요. 박자 설정은 다시 확인해 주세요.'); }
+      }
+      if (token !== uploadGeneration) return;
+      selectTrack(track.id);
+      ui.uploadPercent.textContent = '100%'; ui.uploadProgress.value = 100;
+      ui.uploadMessage.textContent = '저장됐어요. 다른 기기에서도 이 곡을 불러올 수 있어요.';
+    }
+  } catch (error) {
+    if (token !== uploadGeneration) return;
+    ui.uploadMessage.textContent = error.message; ui.retryUploadBtn.hidden = false;
+  } finally {
+    if (token === uploadGeneration) { uploading = false; ui.fileInput.disabled = false; ui.uploadLabel.classList.remove('busy'); }
+  }
+}
+function enqueueFiles(files, grid = null) {
+  const valid = [];
+  for (const file of Array.from(files)) {
+    if (!/\.(mp3|wav|m4a|aac|ogg|opus|flac|webm|aiff|aif)$/i.test(file.name)) { toast(file.name + ': 지원하는 음원 파일을 선택해 주세요.'); continue; }
+    if (!file.size || file.size > maxUploadBytes) { toast(file.name + ': 파일당 최대 ' + Math.floor(maxUploadBytes / 1048576) + ' MB까지 올릴 수 있어요.'); continue; }
+    valid.push({ file, grid });
+  }
+  uploadQueue.push(...valid); void processUploads();
+}
+async function maybeAnalyze(track) {
+  const file = localFiles.get(track.id);
+  if (!file || track.bpm || selected !== track || !Number.isFinite(audio.duration) || audio.duration <= 4 || audio.duration > 300 || file.size > MAX_ANALYSIS_BYTES || matchMedia('(pointer: coarse)').matches || navigator.maxTouchPoints > 1 || !window.AudioContext || !window.Worker) return;
+  localFiles.delete(track.id); cancelAnalysis();
+  const token = analysisGeneration, revision = gridRevisions.get(track.id) || 0;
+  ui.gridNote.textContent = '박자를 가볍게 추정하고 있어요. 재생은 바로 할 수 있어요.';
+  let context;
+  try {
+    context = new AudioContext(); analysisContext = context;
+    const bytes = await file.arrayBuffer();
+    if (token !== analysisGeneration || selected !== track) return;
+    const buffer = await context.decodeAudioData(bytes);
+    if (token !== analysisGeneration || selected !== track) return;
+    const sampleRate = 11025, length = Math.min(Math.floor(buffer.duration * sampleRate), 180 * sampleRate), samples = new Float32Array(length);
+    for (let channel = 0; channel < buffer.numberOfChannels; channel += 1) {
+      const pcm = buffer.getChannelData(channel);
+      for (let index = 0; index < length; index += 1) samples[index] += (pcm[Math.min(pcm.length - 1, Math.floor(index * buffer.sampleRate / sampleRate))] || 0) / buffer.numberOfChannels;
+    }
+    await context.close(); if (analysisContext === context) analysisContext = null;
+    if (token !== analysisGeneration || selected !== track || (gridRevisions.get(track.id) || 0) !== revision) return;
+    const result = await new Promise((resolve, reject) => {
+      const worker = new Worker(new URL('./beat-worker.js', import.meta.url), { type: 'module' }); analysisWorker = worker;
+      analysisCancel = () => reject(abortError());
+      worker.onmessage = ({ data }) => { worker.terminate(); if (analysisWorker === worker) { analysisWorker = null; analysisCancel = null; } data.error ? reject(new Error(data.error)) : resolve(data.result); };
+      worker.onerror = () => { worker.terminate(); if (analysisWorker === worker) { analysisWorker = null; analysisCancel = null; } reject(new Error('박자는 직접 입력해 주세요.')); };
+      worker.postMessage({ id: track.id, samples, sampleRate }, [samples.buffer]);
+    });
+    if (token !== analysisGeneration || selected !== track || (gridRevisions.get(track.id) || 0) !== revision) return;
+    if (result.confidence < 0.35 || !Number.isFinite(result.bpm)) { ui.gridNote.textContent = '박자를 확실히 찾지 못했어요. 기본 96 BPM 대신 곡의 BPM을 입력해 주세요.'; return; }
+    if (await patchTrack(track, { bpm: result.bpm, offset: result.offset })) {
+      if (token === analysisGeneration && selected === track) { renderGrid(); ui.gridNote.textContent = '자동 추정 ' + result.bpm + ' BPM이에요. 첫 마디 첫 박은 직접 들어서 맞춰 주세요.'; }
+    }
+  } catch (error) {
+    if (token === analysisGeneration && selected === track && error.name !== 'AbortError') ui.gridNote.textContent = '자동 추정이 어려운 음원이에요. 곡의 BPM과 첫 박을 직접 입력해 주세요.';
+  } finally {
+    if (context && context.state !== 'closed') await context.close().catch(() => {});
+    if (analysisContext === context) analysisContext = null;
+  }
+}
+async function readLegacy() {
+  if (legacyTracks !== null || !ui.legacyDetails.open) return;
+  legacyTracks = [];
+  try {
+    if (!window.indexedDB) return;
+    if (indexedDB.databases && !(await indexedDB.databases()).some(db => db.name === 'kenneth_lyric_trainer')) return;
+    const db = await new Promise((resolve, reject) => {
+      const request = indexedDB.open('kenneth_lyric_trainer');
+      request.onupgradeneeded = () => { request.transaction.abort(); };
+      request.onsuccess = () => resolve(request.result); request.onerror = () => reject(request.error); request.onblocked = () => reject(new Error('이전 연습 탭을 닫고 다시 시도해 주세요.'));
+    });
+    try {
+      if (!db.objectStoreNames.contains('tracks')) return;
+      legacyTracks = await new Promise((resolve, reject) => {
+        const tx = db.transaction('tracks', 'readonly'), request = tx.objectStore('tracks').getAll();
+        request.onsuccess = () => resolve((request.result || []).filter(track => track.blob && track.blob.size)); request.onerror = () => reject(request.error);
+      });
+    } finally { db.close(); }
+    if (legacyTracks.length) {
+      ui.legacyMessage.textContent = '이 브라우저에 저장된 ' + legacyTracks.length + '곡이 있어요. 공유 연습실로 올려도 이전 저장본은 그대로 남습니다.'; ui.legacyBtn.hidden = false;
+    } else ui.legacyMessage.textContent = '이 브라우저에서 이전 음원을 찾지 못했어요. 원본 음원 파일을 위에서 추가해 주세요.';
+  } catch { ui.legacyMessage.textContent = '이전 저장본을 읽지 못했어요. 원본 음원 파일을 위에서 추가해 주세요. 이전 저장본은 그대로 남아 있어요.'; }
+}
+function transferLegacy() {
+  ui.legacyBtn.disabled = true;
+  for (const track of legacyTracks || []) {
+    const file = new File([track.blob], track.fileName || track.name || '이전 음원.mp3', { type: track.blob.type || track.type || '' });
+    const grid = track.bpm ? { bpm: Number(track.bpm), offset: Math.max(0, Number(track.offset) || 0), ...(Number(track.duration) > 0 ? { duration: Number(track.duration) } : {}) } : null;
+    enqueueFiles([file], grid);
+  }
+  ui.legacyMessage.textContent = '이전 음원을 순서대로 업로드합니다. 이 브라우저의 저장본은 그대로 남아 있어요.';
+}
+function bindMediaSession() {
+  if (!('mediaSession' in navigator)) return;
+  const handlers = { play: resumePlayback, pause: pausePlayback, stop: () => stopPlayback(), seekto: data => seekTo(data.seekTime), seekbackward: data => seekTo(audio.currentTime - (data.seekOffset || 10)), seekforward: data => seekTo(audio.currentTime + (data.seekOffset || 10)) };
+  for (const [action, handler] of Object.entries(handlers)) { try { navigator.mediaSession.setActionHandler(action, handler); } catch { /* An unsupported action is optional. */ } }
+}
+ui.loginForm.addEventListener('submit', login);
+ui.logoutBtn.addEventListener('click', logout);
+ui.reloadBtn.addEventListener('click', initialize);
+ui.retryTracksBtn.addEventListener('click', () => loadTracks());
+ui.trackSelect.addEventListener('change', () => { try { selectTrack(ui.trackSelect.value); } catch (error) { report(error); } });
+ui.randomBtn.addEventListener('click', startTraining);
+ui.pauseBtn.addEventListener('click', togglePause);
+ui.stopBtn.addEventListener('click', () => stopPlayback());
+ui.previewBtn.addEventListener('click', startPreview);
+ui.seek.addEventListener('change', () => seekTo(ui.seek.value));
+ui.gridForm.addEventListener('submit', saveGrid);
+ui.markBeatBtn.addEventListener('click', () => { ui.offset.value = (audio.currentTime || 0).toFixed(3); toast('현재 위치를 입력했어요. 박자 저장을 눌러 주세요.'); });
+ui.deleteBtn.addEventListener('click', deleteTrack);
+ui.fileInput.addEventListener('change', () => { enqueueFiles(ui.fileInput.files); ui.fileInput.value = ''; });
+ui.retryUploadBtn.addEventListener('click', () => processUploads());
+ui.legacyDetails.addEventListener('toggle', readLegacy);
+ui.legacyBtn.addEventListener('click', transferLegacy);
+audio.addEventListener('loadedmetadata', () => {
+  if (!currentResource() || audio.readyState < 1) return;
+  const track = selected, total = audio.duration;
+  renderTransport(); renderTime();
+  if (Number.isFinite(total) && total > 0 && Math.abs(total - (Number(track.duration) || 0)) > 0.1) void patchTrack(track, { duration: total }).catch(report);
+  void maybeAnalyze(track);
+});
+audio.addEventListener('durationchange', () => { renderTime(); renderTransport(); });
+audio.addEventListener('timeupdate', () => { renderTime(); if (session && ['preroll','playing','preview'].includes(session.phase)) paintPlayback(); });
+audio.addEventListener('ended', ended);
+audio.addEventListener('pause', () => { if (audio.paused && !audio.ended && session && ['preroll','playing','preview'].includes(session.phase)) pausePlayback(); });
+audio.addEventListener('error', () => { if (!audio.error || !currentResource()) return; stopPlayback(); ui.playbackMessage.textContent = '음원을 불러오지 못했어요. 연결이나 로그인을 확인해 주세요.'; toast('음원을 재생하지 못했어요. 다른 형식의 음원으로 시도해 주세요.'); });
+audio.addEventListener('waiting', () => { if (session && ['starting','preroll','playing','preview'].includes(session.phase)) ui.playbackMessage.textContent = '음원을 불러오는 중이에요. 연결이 돌아오면 이어집니다.'; });
+audio.addEventListener('playing', () => { if (session && session.phase !== 'unlock') ui.playbackMessage.textContent = '시작한 음원은 곡 끝까지 계속 재생합니다. 준비할 때는 화면을 켜 두세요.'; });
+document.addEventListener('visibilitychange', () => { if (!document.hidden && session && ['preroll','playing','preview'].includes(session.phase)) paintPlayback(); });
+bindMediaSession();
+void initialize();
