@@ -32,6 +32,19 @@ CREATE TABLE IF NOT EXISTS lyric_trainer_login_attempts (
   window_start INTEGER NOT NULL,
   attempts INTEGER NOT NULL
 );
+CREATE TABLE IF NOT EXISTS lyric_trainer_groups (
+  id TEXT PRIMARY KEY,
+  name TEXT NOT NULL COLLATE NOCASE UNIQUE,
+  updated_at TEXT NOT NULL
+);
+CREATE TABLE IF NOT EXISTS lyric_trainer_group_members (
+  group_id TEXT NOT NULL,
+  track_id TEXT NOT NULL,
+  PRIMARY KEY (group_id, track_id),
+  FOREIGN KEY (group_id) REFERENCES lyric_trainer_groups(id) ON DELETE CASCADE,
+  FOREIGN KEY (track_id) REFERENCES lyric_trainer_tracks(id) ON DELETE CASCADE
+);
+CREATE INDEX IF NOT EXISTS idx_lyric_trainer_group_members_track ON lyric_trainer_group_members(track_id);
 `;
 
 const AUDIO_FORMATS = new Map([
@@ -192,9 +205,10 @@ async function ensureSchema(db) {
 async function statusFields(context) {
   return {
     ok: true,
-    version: 3,
-    revision: 'password-r1',
+    version: 4,
+    revision: 'groups-click-v4',
     passwordSource: 'settlement',
+    capabilities: { groups: true, countdownClick: true },
     configured: configured(context.env),
     authenticated: await authenticated(context.request, context.env.SESSION_SECRET),
     storageReady: storageReady(context.env),
@@ -206,7 +220,7 @@ export async function status(context) {
   return respond(context, async () => json(await statusFields(context)));
 }
 
-async function readJson(request) {
+async function readJson(request, maximumBytes = 4096) {
   if ((request.headers.get('Content-Type') || '').split(';')[0].trim().toLowerCase() !== 'application/json') throw new TrainerError(415, 'JSON_REQUIRED', 'JSON 형식으로 요청해 주세요.');
   if (!request.body) throw new TrainerError(400, 'INVALID_JSON', '요청 내용을 확인해 주세요.');
   const reader = request.body.getReader();
@@ -217,7 +231,7 @@ async function readJson(request) {
       const { value, done } = await reader.read();
       if (done) break;
       size += value.byteLength;
-      if (size > 4096) {
+      if (size > maximumBytes) {
         await reader.cancel();
         throw new TrainerError(413, 'REQUEST_TOO_LARGE', '요청 내용이 너무 큽니다.');
       }
@@ -448,14 +462,187 @@ export async function updateTrack(context) {
 export async function deleteTrack(context) {
   return respond(context, async () => {
     await requireAccess(context, true);
+    await ensureSchema(context.env.DB);
     const row = await findTrack(context);
     // Preserve metadata if R2 deletion fails, so a retry can still find it.
     await context.env.MEDIA.delete(row.object_key);
     try {
-      await run(context.env.DB.prepare('DELETE FROM lyric_trainer_tracks WHERE id = ?').bind(row.id));
+      await batch(context.env.DB, [
+        context.env.DB.prepare(`UPDATE lyric_trainer_groups SET updated_at = ? WHERE id IN
+          (SELECT group_id FROM lyric_trainer_group_members WHERE track_id = ?)`).bind(new Date().toISOString(), row.id),
+        context.env.DB.prepare('DELETE FROM lyric_trainer_group_members WHERE track_id = ?').bind(row.id),
+        context.env.DB.prepare('DELETE FROM lyric_trainer_tracks WHERE id = ?').bind(row.id)
+      ]);
     } catch {
       throw new TrainerError(503, 'DELETE_METADATA_FAILED', '음원 파일은 삭제되었지만 목록을 갱신하지 못했습니다. 다시 삭제해 주세요.');
     }
+    return json({ ok: true });
+  });
+}
+
+const MAX_GROUP_TRACKS = 500;
+const GROUP_JSON_BYTES = 64 * 1024;
+const UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
+async function batch(db, statements) {
+  const results = await db.batch(statements);
+  if (!Array.isArray(results) || results.some(result => result?.success === false)) throw new Error('D1 transaction failed.');
+  return results;
+}
+
+function groupId(context) {
+  const id = String(context.params?.id || '');
+  if (!UUID_PATTERN.test(id)) throw new TrainerError(404, 'GROUP_NOT_FOUND', '그룹을 찾지 못했습니다.');
+  return id.toLowerCase();
+}
+
+function groupChanges(body, creation = false) {
+  const keys = Object.keys(body);
+  if (!keys.length || keys.some(key => !['name', 'trackIds'].includes(key)) || (creation && !('name' in body))) {
+    throw new TrainerError(400, 'INVALID_GROUP', '그룹 이름과 선택한 음원을 확인해 주세요.');
+  }
+  const changes = {};
+  if ('name' in body) {
+    if (typeof body.name !== 'string') throw new TrainerError(400, 'INVALID_GROUP', '그룹 이름은 1~80자로 입력해 주세요.');
+    const name = body.name.trim().normalize('NFC');
+    if (!name || name.length > 80 || /[\x00-\x1f\x7f]/.test(name)) throw new TrainerError(400, 'INVALID_GROUP', '그룹 이름은 1~80자로 입력해 주세요.');
+    changes.name = name;
+  }
+  if ('trackIds' in body || creation) {
+    const values = 'trackIds' in body ? body.trackIds : [];
+    if (!Array.isArray(values) || values.some(id => typeof id !== 'string' || !UUID_PATTERN.test(id))) {
+      throw new TrainerError(400, 'INVALID_GROUP_TRACKS', '그룹에 넣을 음원을 다시 선택해 주세요.');
+    }
+    changes.trackIds = [...new Set(values.map(id => id.toLowerCase()))];
+    if (changes.trackIds.length > MAX_GROUP_TRACKS) throw new TrainerError(400, 'INVALID_GROUP_TRACKS', '한 그룹에는 음원을 500곡까지 넣을 수 있습니다.');
+  }
+  return changes;
+}
+
+async function validateGroupTracks(db, ids) {
+  const found = new Set();
+  // D1 allows at most 100 bound parameters per query. This also keeps a
+  // 500-track request comfortably below the Free plan's query-call limit.
+  for (let index = 0; index < ids.length; index += 90) {
+    const chunk = ids.slice(index, index + 90);
+    const result = await db.prepare(`SELECT id FROM lyric_trainer_tracks WHERE id IN (${chunk.map(() => '?').join(', ')})`).bind(...chunk).all();
+    if (result?.success === false) throw new Error('Track validation failed.');
+    for (const row of result.results || []) found.add(row.id);
+  }
+  if (ids.some(id => !found.has(id))) throw new TrainerError(400, 'INVALID_GROUP_TRACKS', '삭제되었거나 찾지 못한 음원이 있습니다. 음원 목록을 새로고침해 주세요.');
+}
+
+function memberInserts(db, id, trackIds) {
+  const statements = [];
+  for (let index = 0; index < trackIds.length; index += 45) {
+    const chunk = trackIds.slice(index, index + 45);
+    statements.push(db.prepare(`INSERT INTO lyric_trainer_group_members (group_id, track_id) VALUES ${chunk.map(() => '(?, ?)').join(', ')}`)
+      .bind(...chunk.flatMap(trackId => [id, trackId])));
+  }
+  return statements;
+}
+
+const GROUP_SELECT = `SELECT g.id, g.name, g.updated_at, t.id AS track_id
+  FROM lyric_trainer_groups AS g
+  LEFT JOIN lyric_trainer_group_members AS m ON m.group_id = g.id
+  LEFT JOIN lyric_trainer_tracks AS t ON t.id = m.track_id`;
+
+function groupDtos(rows) {
+  const groups = new Map();
+  for (const row of rows) {
+    let group = groups.get(row.id);
+    if (!group) {
+      group = { id: row.id, name: row.name, trackIds: [], updatedAt: row.updated_at };
+      groups.set(row.id, group);
+    }
+    if (row.track_id) group.trackIds.push(row.track_id);
+  }
+  return [...groups.values()];
+}
+
+async function findGroup(context, id = groupId(context)) {
+  const result = await context.env.DB.prepare(`${GROUP_SELECT} WHERE g.id = ? ORDER BY m.track_id`).bind(id).all();
+  if (result?.success === false) throw new Error('Group read failed.');
+  const group = groupDtos(result.results || [])[0];
+  if (!group) throw new TrainerError(404, 'GROUP_NOT_FOUND', '그룹을 찾지 못했습니다.');
+  return group;
+}
+
+function rethrowGroupMutation(error) {
+  if (error instanceof TrainerError) throw error;
+  const detail = `${error?.message || ''} ${error?.cause?.message || ''}`;
+  if (/UNIQUE constraint failed:\s*lyric_trainer_groups\.name/i.test(detail)) {
+    throw new TrainerError(409, 'GROUP_NAME_EXISTS', '같은 이름의 그룹이 있습니다. 다른 이름을 입력해 주세요.');
+  }
+  if (/FOREIGN KEY constraint failed/i.test(detail)) {
+    throw new TrainerError(409, 'GROUP_CONFLICT', '선택한 그룹이나 음원이 변경되었습니다. 목록을 새로고침한 뒤 다시 저장해 주세요.');
+  }
+  throw error;
+}
+
+export async function listGroups(context) {
+  return respond(context, async () => {
+    await requireAccess(context);
+    await ensureSchema(context.env.DB);
+    const result = await context.env.DB.prepare(`${GROUP_SELECT} ORDER BY g.name COLLATE NOCASE, g.id, m.track_id`).all();
+    if (result?.success === false) throw new Error('Group list failed.');
+    return json({ ok: true, groups: groupDtos(result.results || []) });
+  });
+}
+
+export async function createGroup(context) {
+  return respond(context, async () => {
+    await requireAccess(context, true);
+    const changes = groupChanges(await readJson(context.request, GROUP_JSON_BYTES), true);
+    await ensureSchema(context.env.DB);
+    await validateGroupTracks(context.env.DB, changes.trackIds);
+    const id = crypto.randomUUID();
+    const updatedAt = new Date().toISOString();
+    try {
+      await batch(context.env.DB, [
+        context.env.DB.prepare('INSERT INTO lyric_trainer_groups (id, name, updated_at) VALUES (?, ?, ?)').bind(id, changes.name, updatedAt),
+        ...memberInserts(context.env.DB, id, changes.trackIds)
+      ]);
+    } catch (error) {
+      rethrowGroupMutation(error);
+    }
+    return json({ ok: true, group: await findGroup(context, id) }, 201);
+  });
+}
+
+export async function updateGroup(context) {
+  return respond(context, async () => {
+    await requireAccess(context, true);
+    const id = groupId(context);
+    const changes = groupChanges(await readJson(context.request, GROUP_JSON_BYTES));
+    await ensureSchema(context.env.DB);
+    await findGroup(context, id);
+    if ('trackIds' in changes) await validateGroupTracks(context.env.DB, changes.trackIds);
+    const statements = [context.env.DB.prepare(`UPDATE lyric_trainer_groups SET updated_at = ?${'name' in changes ? ', name = ?' : ''} WHERE id = ?`)
+      .bind(new Date().toISOString(), ...('name' in changes ? [changes.name] : []), id)];
+    if ('trackIds' in changes) statements.push(
+      context.env.DB.prepare('DELETE FROM lyric_trainer_group_members WHERE group_id = ?').bind(id),
+      ...memberInserts(context.env.DB, id, changes.trackIds)
+    );
+    try {
+      await batch(context.env.DB, statements);
+    } catch (error) {
+      rethrowGroupMutation(error);
+    }
+    return json({ ok: true, group: await findGroup(context, id) });
+  });
+}
+
+export async function deleteGroup(context) {
+  return respond(context, async () => {
+    await requireAccess(context, true);
+    const id = groupId(context);
+    await ensureSchema(context.env.DB);
+    await findGroup(context, id);
+    await batch(context.env.DB, [
+      context.env.DB.prepare('DELETE FROM lyric_trainer_group_members WHERE group_id = ?').bind(id),
+      context.env.DB.prepare('DELETE FROM lyric_trainer_groups WHERE id = ?').bind(id)
+    ]);
     return json({ ok: true });
   });
 }

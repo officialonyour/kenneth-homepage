@@ -1,10 +1,16 @@
 import { buildTargets, barSeconds, pickTarget } from './engine.js';
+import { PreparationClicks } from './preparation-clicks.js';
 
-const ids = ['servicePanel','serviceTitle','serviceMessage','reloadBtn','loginPanel','loginForm','password','loginBtn','loginMessage','workspace','logoutBtn','trackCount','trackSelect','libraryStatus','trackMeta','fileInfo','deleteBtn','uploadLabel','fileInput','uploadLimit','uploadPanel','uploadName','uploadPercent','uploadProgress','uploadMessage','retryUploadBtn','retryTracksBtn','legacyDetails','legacyMessage','legacyBtn','nowTitle','cloudState','stageStatus','count','beatDots','stageMessage','stageDetail','seek','currentTime','startInfo','totalTime','randomBtn','pauseBtn','stopBtn','playbackMessage','beatSettings','gridBadge','gridNote','gridForm','bpm','offset','previewBtn','markBeatBtn','saveGridBtn','player','toast'];
+const ids = ['servicePanel','serviceTitle','serviceMessage','reloadBtn','loginPanel','loginForm','password','loginBtn','loginMessage','workspace','logoutBtn','trackCount','groupSelect','groupStatus','groupManager','groupForm','groupEditSelect','groupName','groupTrackList','saveGroupBtn','deleteGroupBtn','groupMessage','trackSelect','libraryStatus','trackMeta','fileInfo','deleteBtn','uploadLabel','fileInput','uploadLimit','uploadPanel','uploadName','uploadPercent','uploadProgress','uploadMessage','retryUploadBtn','retryTracksBtn','legacyDetails','legacyMessage','legacyBtn','nowTitle','cloudState','stageStatus','count','beatDots','stageMessage','stageDetail','seek','currentTime','startInfo','totalTime','randomBtn','pauseBtn','stopBtn','playbackMessage','beatSettings','gridBadge','gridNote','gridForm','bpm','offset','previewBtn','markBeatBtn','saveGridBtn','player','toast'];
 const ui = Object.fromEntries(ids.map(id => [id, document.getElementById(id)]));
 const audio = ui.player;
 const API = '/api/lyric-trainer';
 const SELECTED_KEY = 'kenneth_lyric_trainer_cloud_selected_v3';
+const GROUP_KEY = 'kenneth_lyric_trainer_group_v4';
+const preparationClicks = new PreparationClicks();
+let groups = [], selectedGroupId = '', editingGroupId = '', groupsLoading = false, groupSaving = false;
+const groupCheckboxes = new Map();
+const lastSuccessfulSongs = new Map();
 const MAX_ANALYSIS_BYTES = 8 * 1048576;
 let tracks = [], selected = null, session = null, generation = 0, countdownTimer = 0, frame = 0, toastTimer = 0;
 let authGeneration = 0, maxUploadBytes = 80 * 1048576, uploadGeneration = 0, uploading = false, uploadQueue = [], uploadXHR = null;
@@ -58,6 +64,7 @@ function cancelAnalysis() {
   analysisContext = null;
 }
 function clearClock() {
+  preparationClicks.cancel();
   clearTimeout(countdownTimer); countdownTimer = 0;
   cancelAnimationFrame(frame); frame = 0;
 }
@@ -69,7 +76,7 @@ function setStage(status, count, message, detail, idle = false) {
   if (ui.stageDetail.textContent !== detail) ui.stageDetail.textContent = detail;
 }
 function resetStage() {
-  setStage('준비됐나요?', 'READY', selected ? '랜덤 버튼을 누르면 시작해요.' : '곡을 고르고, 한 번 눌러요.', '3초 준비 → 한 마디 미리 듣기 → 곡 끝까지', true);
+  setStage('준비됐나요?', 'READY', availableGroupTracks().length ? '그룹에서 곡과 마디를 랜덤으로 골라요.' : '음원을 추가하거나 그룹에 곡을 넣어 주세요.', '딱, 딱, 딱 · 3초 준비 → 한 마디 먼저 → 곡 끝까지', true);
   ui.startInfo.textContent = '3초 준비 → 1마디 먼저 → 곡 끝까지';
   Array.from(ui.beatDots.children).forEach(dot => dot.classList.remove('active'));
 }
@@ -85,7 +92,8 @@ function stopPlayback({ resetPosition = true, render = true } = {}) {
 function renderTransport() {
   const available = !!selected;
   const ready = available && duration() > 0;
-  ui.randomBtn.disabled = !ready || session?.phase === 'unlock' || session?.phase === 'starting';
+  const canRandom = availableGroupTracks().some(eligibleTrack);
+  ui.randomBtn.disabled = !canRandom || groupsLoading || session?.phase === 'unlock' || session?.phase === 'starting';
   ui.pauseBtn.disabled = !session || session.phase === 'unlock';
   ui.stopBtn.disabled = !session;
   const paused = session && ['paused','blocked'].includes(session.phase);
@@ -110,17 +118,97 @@ function renderGrid() {
   ui.gridBadge.textContent = (selected?.bpm || 96) + ' BPM · 4박';
   ui.gridNote.textContent = selected?.bpm ? '저장된 박자예요. 첫 마디 첫 박이 맞는지 들어서 확인해 주세요.' : '96 BPM은 기본값이에요. 곡의 BPM과 초반 첫 마디의 첫 박을 확인해 주세요.';
 }
+function availableGroupTracks() {
+  if (!selectedGroupId) return tracks;
+  const membership = new Set(groups.find(group => group.id === selectedGroupId)?.trackIds || []);
+  return tracks.filter(track => membership.has(track.id));
+}
+function eligibleTrack(track) {
+  const total = selected === track ? duration() : Number(track.duration) || 0;
+  if (!(total > 0)) return true; // Native metadata is loaded after the synchronous gesture unlock.
+  try { return buildTargets({ duration: total, bpm: track.bpm || 96, offset: track.offset || 0 }).length > 0; } catch { return false; }
+}
+function rememberGroup() { try { localStorage.setItem(GROUP_KEY, selectedGroupId); } catch { /* Optional device preference. */ } }
+function renderGroupEditor({ preserveDraft = false } = {}) {
+  const draftName = ui.groupName.value, draftChecks = new Map([...groupCheckboxes].map(([id,checkbox]) => [id, checkbox.checked]));
+  const group = groups.find(item => item.id === editingGroupId);
+  ui.groupName.value = preserveDraft ? draftName : group?.name || '';
+  ui.deleteGroupBtn.hidden = !group;
+  ui.groupTrackList.replaceChildren(); groupCheckboxes.clear();
+  const members = new Set(group?.trackIds || []);
+  for (const track of tracks) {
+    const label = document.createElement('label'), checkbox = document.createElement('input'), name = document.createElement('span');
+    checkbox.type = 'checkbox'; checkbox.checked = preserveDraft && draftChecks.has(track.id) ? draftChecks.get(track.id) : members.has(track.id); checkbox.disabled = groupSaving;
+    name.textContent = track.name || track.fileName; label.append(checkbox, name); ui.groupTrackList.append(label); groupCheckboxes.set(track.id, checkbox);
+  }
+  if (!tracks.length) { const empty = document.createElement('p'); empty.className = 'hint'; empty.textContent = '먼저 음원을 추가해 주세요.'; ui.groupTrackList.append(empty); }
+  ui.groupName.disabled = groupSaving; ui.groupEditSelect.disabled = groupSaving || groupsLoading;
+  ui.saveGroupBtn.disabled = groupSaving || groupsLoading; ui.deleteGroupBtn.disabled = groupSaving;
+}
+function renderGroups({ editor = true } = {}) {
+  if (selectedGroupId && !groups.some(group => group.id === selectedGroupId)) { selectedGroupId = ''; rememberGroup(); }
+  if (editingGroupId && !groups.some(group => group.id === editingGroupId)) editingGroupId = '';
+  ui.groupSelect.replaceChildren(); ui.groupEditSelect.replaceChildren();
+  for (const [select, name] of [[ui.groupSelect, '전체 음원'], [ui.groupEditSelect, '새 그룹 만들기']]) { const option = document.createElement('option'); option.value = ''; option.textContent = name; select.append(option); }
+  for (const group of groups) {
+    const option = document.createElement('option'); option.value = group.id; option.textContent = group.name + ' · ' + group.trackIds.length + '곡'; ui.groupSelect.append(option);
+    const editOption = document.createElement('option'); editOption.value = group.id; editOption.textContent = group.name; ui.groupEditSelect.append(editOption);
+  }
+  ui.groupSelect.value = selectedGroupId; ui.groupSelect.disabled = groupsLoading; ui.groupEditSelect.value = editingGroupId;
+  const choices = availableGroupTracks(), usable = choices.filter(eligibleTrack).length;
+  ui.groupStatus.textContent = groupsLoading ? '그룹을 불러오고 있어요.' : !choices.length ? (selectedGroupId ? '이 그룹에는 곡이 없어요. 그룹 편집에서 음원을 선택해 주세요.' : '내 음원을 올리면 곡과 마디를 함께 랜덤으로 골라요.') : !usable ? '한 마디를 먼저 들을 수 있는 음원이 없어요. 곡 길이와 박자 설정을 확인해 주세요.' : choices.length + '곡에서 곡과 시작 마디를 랜덤으로 골라요.';
+  if (editor) renderGroupEditor();
+}
+function changeGroup(id) {
+  selectedGroupId = groups.some(group => group.id === id) ? id : ''; rememberGroup();
+  stopPlayback(); cancelAnalysis();
+  const choices = availableGroupTracks();
+  if (!choices.includes(selected)) selectTrack(choices[0]?.id);
+  else { resetStage(); renderTracks(); }
+}
+async function saveGroup(event) {
+  event.preventDefault(); if (groupSaving) return;
+  const name = ui.groupName.value.trim();
+  if (!name || name.length > 80) { ui.groupMessage.textContent = '그룹 이름을 1~80자로 입력해 주세요.'; return; }
+  const trackIds = [...groupCheckboxes].filter(([,checkbox]) => checkbox.checked).map(([id]) => id);
+  if (trackIds.length > 500) { ui.groupMessage.textContent = '한 그룹에는 최대 500곡을 넣을 수 있어요.'; return; }
+  stopPlayback();
+  const token = authGeneration, id = editingGroupId; groupSaving = true; ui.groupMessage.textContent = '그룹을 저장하고 있어요.'; ui.saveGroupBtn.disabled = true; ui.deleteGroupBtn.disabled = true; ui.groupEditSelect.disabled = true;
+  try {
+    const result = await api('/groups' + (id ? '/' + encodeURIComponent(id) : ''), { method: id ? 'PATCH' : 'POST', body: { name, trackIds } });
+    if (token !== authGeneration) return;
+    groups = [...groups.filter(group => group.id !== result.group.id), result.group].sort((a,b) => a.name.localeCompare(b.name)); editingGroupId = result.group.id;
+    changeGroup(result.group.id); renderGroupEditor(); ui.groupMessage.textContent = '그룹을 저장했어요. 다른 기기에서도 같은 그룹을 불러와요.';
+  } catch (error) { if (token === authGeneration) ui.groupMessage.textContent = error.message; }
+  finally { if (token === authGeneration) { groupSaving = false; ui.saveGroupBtn.disabled = false; ui.deleteGroupBtn.disabled = false; ui.groupEditSelect.disabled = groupsLoading; ui.groupName.disabled = false; for (const checkbox of groupCheckboxes.values()) checkbox.disabled = false; } }
+}
+async function deleteGroup() {
+  const group = groups.find(item => item.id === editingGroupId);
+  if (!group || groupSaving || !confirm('‘' + group.name + '’ 그룹을 삭제할까요? 음원 파일은 그대로 남아요.')) return;
+  if (selectedGroupId === group.id) stopPlayback();
+  const token = authGeneration; groupSaving = true; ui.deleteGroupBtn.disabled = true;
+  try {
+    await api('/groups/' + encodeURIComponent(group.id), { method: 'DELETE' });
+    if (token !== authGeneration) return;
+    groups = groups.filter(item => item.id !== group.id); editingGroupId = ''; lastSuccessfulSongs.delete(group.id);
+    if (selectedGroupId === group.id) changeGroup(''); else renderGroups();
+    ui.groupMessage.textContent = '그룹을 삭제했어요. 음원 파일은 그대로 남아 있어요.';
+  } catch (error) { if (token === authGeneration) ui.groupMessage.textContent = error.message; }
+  finally { if (token === authGeneration) { groupSaving = false; renderGroupEditor(); } }
+}
 function renderTracks() {
+  renderGroups({ editor: false });
+  const visibleTracks = availableGroupTracks();
   ui.trackSelect.replaceChildren();
-  if (!tracks.length) {
+  if (!visibleTracks.length) {
     const option = document.createElement('option'); option.value = ''; option.textContent = '음원을 추가해 주세요'; ui.trackSelect.append(option);
   } else {
-    for (const track of tracks) {
+    for (const track of visibleTracks) {
       const option = document.createElement('option'); option.value = track.id; option.textContent = track.name || track.fileName; ui.trackSelect.append(option);
     }
   }
   ui.trackCount.textContent = tracks.length + '곡';
-  ui.trackSelect.disabled = !tracks.length;
+  ui.trackSelect.disabled = !visibleTracks.length;
   ui.trackSelect.value = selected?.id || '';
   ui.libraryStatus.textContent = tracks.length ? '한 번 올린 음원을 다른 기기에서도 불러와요.' : '내 곡을 올려 첫 연습을 시작해 보세요.';
   ui.trackMeta.hidden = !selected;
@@ -146,21 +234,24 @@ function cancelUploads() {
 function showLogin(message = '') {
   authGeneration += 1;
   stopPlayback(); cancelAnalysis(); cancelUploads();
-  selected = null; tracks = []; audio.removeAttribute('src'); audio.load(); localFiles.clear();
+  selected = null; tracks = []; groups = []; selectedGroupId = ''; editingGroupId = ''; groupsLoading = false; groupSaving = false; audio.removeAttribute('src'); audio.load(); localFiles.clear();
   ui.workspace.hidden = true; ui.servicePanel.hidden = true; ui.loginPanel.hidden = false; ui.logoutBtn.hidden = true;
   ui.loginMessage.textContent = message;
 }
 async function loadTracks(token = authGeneration) {
-  ui.retryTracksBtn.hidden = true; ui.libraryStatus.textContent = '음원을 불러오고 있어요.';
+  ui.retryTracksBtn.hidden = true; ui.libraryStatus.textContent = '음원과 그룹을 불러오고 있어요.'; groupsLoading = true; renderGroups(); renderTransport();
   try {
-    const result = await api('/tracks');
+    const [result, groupResult] = await Promise.all([api('/tracks'), api('/groups')]);
     if (token !== authGeneration) return;
-    tracks = Array.isArray(result.tracks) ? result.tracks : [];
-    const id = selected?.id || remembered();
-    selectTrack(tracks.some(track => track.id === id) ? id : tracks[0]?.id);
+    tracks = Array.isArray(result.tracks) ? result.tracks : []; groups = Array.isArray(groupResult.groups) ? groupResult.groups : [];
+    try { selectedGroupId = localStorage.getItem(GROUP_KEY) || ''; } catch { selectedGroupId = ''; }
+    if (!groups.some(group => group.id === selectedGroupId)) selectedGroupId = '';
+    groupsLoading = false; renderGroupEditor();
+    const choices = availableGroupTracks(), id = selected?.id || remembered();
+    selectTrack(choices.some(track => track.id === id) ? id : choices[0]?.id);
   } catch (error) {
     if (token !== authGeneration || error.status === 401) return;
-    ui.libraryStatus.textContent = error.message; ui.retryTracksBtn.hidden = false;
+    groupsLoading = false; ui.libraryStatus.textContent = error.message; ui.groupStatus.textContent = '그룹을 불러오지 못했어요. 곡 목록 다시 불러오기를 눌러 주세요.'; ui.retryTracksBtn.hidden = false; renderTransport();
   }
 }
 async function initialize() {
@@ -209,17 +300,19 @@ function blocked(current, token, error, resumeFrom) {
   if (!active(token, current)) return;
   clearClock(); audio.muted = false; audio.pause();
   current.phase = 'blocked'; current.resumeFrom = resumeFrom;
-  setStage('한 번 더 눌러 주세요', '▶', '이어 재생을 누르면 시작해요.', error?.name === 'NotAllowedError' ? '브라우저가 자동 재생을 막았어요. 아래 버튼으로 재생해 주세요.' : '음원을 재생하지 못했어요. 연결을 확인한 뒤 이어 재생을 눌러 주세요.');
+  setStage('한 번 더 눌러 주세요', '▶', '이어 재생을 누르면 시작해요.', error?.name === 'NotAllowedError' ? '브라우저가 자동 재생을 막았어요. 아래 버튼으로 재생해 주세요.' : error?.countdownSound ? error.message : '음원을 재생하지 못했어요. 연결을 확인한 뒤 이어 재생을 눌러 주세요.');
   ui.playbackMessage.textContent = '이어 재생 버튼을 누르면 같은 시작점에서 계속합니다.'; renderTransport();
 }
 function startAudio(current, token) {
   if (!active(token, current)) return;
+  preparationClicks.cancel();
   current.phase = 'starting'; audio.muted = false; renderTransport();
   let promise;
   try { promise = audio.play(); } catch (error) { blocked(current, token, error, 'audio'); return; }
   Promise.resolve(promise).then(() => {
     if (!active(token, current)) return;
     current.phase = current.type === 'preview' ? 'preview' : 'preroll';
+    if (current.type === 'training') lastSuccessfulSongs.set(current.groupKey, current.trackId);
     ui.playbackMessage.textContent = '시작한 음원은 곡 끝까지 계속 재생합니다. 준비할 때는 화면을 켜 두세요.';
     if ('mediaSession' in navigator) navigator.mediaSession.playbackState = 'playing';
     renderTransport(); paintPlayback();
@@ -234,32 +327,50 @@ function countdownTick(current, token) {
 }
 function beginCountdown(current, token) {
   current.phase = 'countdown'; current.deadline = now() + current.remaining;
-  ui.playbackMessage.textContent = '3초 준비 중에는 화면을 켜 두세요. 이후 곡 끝까지 재생됩니다.';
+  current.deadline = preparationClicks.start({ remainingMs: current.remaining, deadline: current.deadline });
+  ui.playbackMessage.textContent = '3, 2, 1에 한 번씩 준비 박자 소리가 나요. 준비 중에는 화면을 켜 두세요.';
   renderTransport(); countdownTick(current, token);
 }
-// Called directly by a click handler: the first play() occurs within the user gesture.
+// Both media systems are unlocked synchronously within the user click before metadata is awaited.
 function unlockForCountdown(current, token) {
   current.phase = 'unlock'; audio.muted = true;
-  setStage('음원 준비 중', '…', '재생을 준비하고 있어요.', '준비가 끝나면 3초 카운트다운이 시작됩니다.'); renderTransport();
-  let promise;
-  try { promise = audio.play(); } catch (error) { blocked(current, token, error, 'countdown'); return; }
-  Promise.resolve(promise).then(() => {
+  setStage('음원 준비 중', '…', '랜덤 곡의 재생을 준비하고 있어요.', '준비가 끝나면 딱, 딱, 딱 · 3초 카운트다운이 시작됩니다.'); renderTransport();
+  let soundPromise, playPromise;
+  try {
+    soundPromise = preparationClicks.unlock();
+    playPromise = audio.play();
+  } catch (error) { blocked(current, token, error, 'countdown'); return; }
+  Promise.all([Promise.resolve(playPromise), Promise.resolve(soundPromise).then(ready => {
+    if (!ready) { const error = new Error('준비 박자 소리를 재생하지 못했어요. 이어 재생을 눌러 다시 시도해 주세요.'); error.countdownSound = true; throw error; }
+  })]).then(() => {
     if (!active(token, current)) return;
-    audio.pause(); audio.currentTime = current.plan.start; audio.muted = false;
+    audio.pause(); audio.muted = false;
+    if (!current.plan) {
+      // Use one consistent grid snapshot after native metadata and optional analysis settle.
+      current.bpm = selected.bpm || 96; current.offset = selected.offset || 0;
+      try {
+        current.plan = pickTarget(buildTargets({ duration: duration(), bpm: current.bpm, offset: current.offset }), { lastTarget: lastTargets.get(current.trackId) });
+      } catch {
+        stopPlayback(); toast('선택된 곡의 길이나 박자를 확인해 주세요. 한 마디를 먼저 들을 수 있는 길이가 필요해요.'); return;
+      }
+      lastTargets.set(current.trackId, current.plan.target);
+    }
+    audio.currentTime = current.plan.start;
+    ui.startInfo.textContent = '시작점 ' + fmt(current.plan.target) + ' → 곡 끝까지';
     renderTime(); beginCountdown(current, token);
   }).catch(error => blocked(current, token, error, 'countdown'));
 }
 function startTraining() {
-  if (!selected) return;
-  let plan;
-  try {
-    plan = pickTarget(buildTargets({ duration: duration(), bpm: selected.bpm || 96, offset: selected.offset || 0 }), { lastTarget: lastTargets.get(selected.id) });
-  } catch { toast('한 마디를 먼저 들을 수 있는 길이가 필요해요. 곡 길이와 박자 설정을 확인해 주세요.'); return; }
-  stopPlayback({ resetPosition: false, render: false });
+  const eligible = availableGroupTracks().filter(eligibleTrack);
+  if (!eligible.length) { toast('그룹에 연습할 곡을 넣어 주세요. 한 마디를 먼저 들을 수 있는 음원이 필요해요.'); return; }
+  const groupKey = selectedGroupId || 'all', previous = lastSuccessfulSongs.get(groupKey);
+  const alternatives = eligible.filter(track => track.id !== previous);
+  const choices = alternatives.length ? alternatives : eligible;
+  const track = choices[Math.min(choices.length - 1, Math.floor(Math.random() * choices.length))];
+  if (selected !== track) selectTrack(track.id);
+  else stopPlayback({ resetPosition: false, render: false });
   const token = generation;
-  session = { type: 'training', phase: 'unlock', plan, remaining: 3000, bpm: selected.bpm || 96 };
-  lastTargets.set(selected.id, plan.target);
-  ui.startInfo.textContent = '시작점 ' + fmt(plan.target) + ' → 곡 끝까지';
+  session = { type: 'training', phase: 'unlock', plan: null, remaining: 3000, bpm: track.bpm || 96, trackId: track.id, groupKey };
   unlockForCountdown(session, token);
   if (matchMedia('(max-width: 780px)').matches) ui.count.scrollIntoView?.({ behavior: 'smooth', block: 'center' });
 }
@@ -358,11 +469,16 @@ async function deleteTrack() {
   try {
     await api('/tracks/' + encodeURIComponent(track.id), { method: 'DELETE' });
     if (token !== authGeneration) return;
-    tracks = tracks.filter(item => item !== track); localFiles.delete(track.id); lastTargets.delete(track.id);
-    selectTrack(selected === track ? tracks[0]?.id : selected?.id);
+    tracks = tracks.filter(item => item !== track);
+    groups.forEach(group => { group.trackIds = group.trackIds.filter(id => id !== track.id); });
+    localFiles.delete(track.id); lastTargets.delete(track.id);
+    renderGroupEditor({ preserveDraft: true });
+    if (selected === track) selectTrack(availableGroupTracks()[0]?.id);
+    else renderTracks(); // A late delete response cannot stop a newer selection/session.
     toast('공유 연습실에서 음원을 삭제했어요.');
   } catch (error) { report(error); renderTransport(); }
 }
+
 function rawUpload(file, token) {
   return new Promise((resolve, reject) => {
     const xhr = new XMLHttpRequest(); uploadXHR = xhr;
@@ -406,6 +522,8 @@ async function processUploads() {
         try { await patchTrack(track, entry.grid); } catch { toast('음원은 올렸어요. 박자 설정은 다시 확인해 주세요.'); }
       }
       if (token !== uploadGeneration) return;
+      if (selectedGroupId) { selectedGroupId = ''; rememberGroup(); }
+      renderGroupEditor({ preserveDraft: true });
       selectTrack(track.id);
       ui.uploadPercent.textContent = '100%'; ui.uploadProgress.value = 100;
       ui.uploadMessage.textContent = '저장됐어요. 다른 기기에서도 이 곡을 불러올 수 있어요.';
@@ -506,6 +624,10 @@ ui.loginForm.addEventListener('submit', login);
 ui.logoutBtn.addEventListener('click', logout);
 ui.reloadBtn.addEventListener('click', initialize);
 ui.retryTracksBtn.addEventListener('click', () => loadTracks());
+ui.groupSelect.addEventListener('change', () => changeGroup(ui.groupSelect.value));
+ui.groupEditSelect.addEventListener('change', () => { stopPlayback(); editingGroupId = ui.groupEditSelect.value; ui.groupMessage.textContent = ''; renderGroupEditor(); });
+ui.groupForm.addEventListener('submit', saveGroup);
+ui.deleteGroupBtn.addEventListener('click', deleteGroup);
 ui.trackSelect.addEventListener('change', () => { try { selectTrack(ui.trackSelect.value); } catch (error) { report(error); } });
 ui.randomBtn.addEventListener('click', startTraining);
 ui.pauseBtn.addEventListener('click', togglePause);
