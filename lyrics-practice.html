@@ -6,7 +6,7 @@
   <meta name="color-scheme" content="dark">
   <meta name="theme-color" content="#101114">
   <title>랜덤 가사 연습 | KENNETH</title>
-  <link rel="stylesheet" href="./lyric-trainer/styles.css?v=3">
+  <link rel="stylesheet" href="./lyric-trainer/styles.css?v=3-password-r1">
 </head>
 <body>
   <main class="app">
@@ -18,8 +18,8 @@
 
     <section id="servicePanel" class="access-panel panel" aria-live="polite"><span class="access-icon">♫</span><h2 id="serviceTitle">내 연습실을 불러오고 있어요.</h2><p id="serviceMessage">잠시만 기다려 주세요.</p><button id="reloadBtn" class="button secondary" hidden>다시 불러오기</button></section>
     <section id="loginPanel" class="access-panel panel" hidden>
-      <span class="access-icon">♫</span><h2>내 음원으로 연습하기.</h2><p>홈페이지 관리자 비밀번호로 로그인하세요.<br>한 번 올린 음원은 다른 기기에서도 불러올 수 있어요.</p>
-      <form id="loginForm" class="login-form"><label class="sr-only" for="password">홈페이지 관리자 비밀번호</label><input id="password" type="password" autocomplete="current-password" placeholder="관리자 비밀번호" required><button id="loginBtn" class="button primary" type="submit">연습실 열기 →</button></form>
+      <span class="access-icon">♫</span><h2>내 음원으로 연습하기.</h2><p>음원 정산관리에서 사용 중인 비밀번호로 로그인하세요.<br>한 번 올린 음원은 다른 기기에서도 불러올 수 있어요.</p>
+      <form id="loginForm" class="login-form"><label class="sr-only" for="password">정산관리 비밀번호</label><input id="password" type="password" autocomplete="current-password" placeholder="정산관리 비밀번호" required><button id="loginBtn" class="button primary" type="submit">연습실 열기 →</button></form>
       <p id="loginMessage" class="error-text" role="status"></p>
     </section>
 
@@ -49,6 +49,6 @@
   </main>
   <audio id="player" preload="metadata" playsinline></audio>
   <div id="toast" class="toast" role="status" aria-live="polite"></div>
-  <script type="module" src="./lyric-trainer/app.js?v=3"></script>
+  <script type="module" src="./lyric-trainer/app.js?v=3-password-r1"></script>
 </body>
 </html>

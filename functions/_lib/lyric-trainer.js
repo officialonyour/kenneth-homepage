@@ -7,7 +7,7 @@ export const PRIVATE_PREFIX = 'lyric-trainer-private/';
 export const SESSION_COOKIE = 'kenneth_lyric_trainer';
 const SESSION_SECONDS = 8 * 60 * 60;
 const COOKIE_PATH = '/api/lyric-trainer';
-const SESSION_AUDIENCE = 'kenneth-lyric-trainer:v3';
+const SESSION_AUDIENCE = 'kenneth-lyric-trainer:v3:password-r1';
 const LOGIN_WINDOW_SECONDS = 600;
 const LOGIN_LIMIT = 8;
 const schemaPromises = new WeakMap();
@@ -91,7 +91,7 @@ function storageReady(env) {
 }
 
 function configured(env) {
-  return !!env.ADMIN_PASSWORD && !!env.SESSION_SECRET && storageReady(env);
+  return !!env.SETTLEMENT_ADMIN_PASSWORD && !!env.SESSION_SECRET && storageReady(env);
 }
 
 function sameOrigin(request) {
@@ -193,6 +193,8 @@ async function statusFields(context) {
   return {
     ok: true,
     version: 3,
+    revision: 'password-r1',
+    passwordSource: 'settlement',
     configured: configured(context.env),
     authenticated: await authenticated(context.request, context.env.SESSION_SECRET),
     storageReady: storageReady(context.env),
@@ -265,7 +267,7 @@ export async function login(context) {
     }
     // Remove old limiter rows only in this feature's own table.
     await run(context.env.DB.prepare('DELETE FROM lyric_trainer_login_attempts WHERE window_start < ?').bind(now - LOGIN_WINDOW_SECONDS * 2));
-    if (!await verifyPassword(body.password, context.env.ADMIN_PASSWORD)) throw new TrainerError(401, 'INVALID_PASSWORD', '비밀번호가 맞지 않습니다.');
+    if (!await verifyPassword(body.password, context.env.SETTLEMENT_ADMIN_PASSWORD)) throw new TrainerError(401, 'INVALID_PASSWORD', '비밀번호가 맞지 않습니다.');
     const token = await sessionToken(context.env.SESSION_SECRET);
     await run(context.env.DB.prepare('DELETE FROM lyric_trainer_login_attempts WHERE key_hash = ?').bind(hash));
     return json({ ...await statusFields(context), authenticated: true }, 200, { 'Set-Cookie': cookie(token) });
