@@ -6,7 +6,7 @@ const CHUNK_SIZE = 500;
 const RAW_SELECT = `SELECT
   id,source_row_no,distributor,source_file,settlement_ym,occurrence_ym,artist,album_title,song_title,
   original_platform,original_service,source_key,platform,original_count,adjusted_count,analysis_count,count_basis,
-  estimate_method,estimate_confidence,settlement_amount,revenue_source,notes
+  estimate_method,estimate_confidence,settlement_amount,revenue_source,notes,month_song_key
   FROM music_settlement_records`;
 
 function bucket(env) {
@@ -362,10 +362,94 @@ export function settlementImportIdentity(row, business = false) {
   return JSON.stringify(identity);
 }
 
+export function isRawSettlementImport(row) {
+  return row?.import_format === "minerva" || row?.import_format === "luminant";
+}
+
+function luminantCodeIdentity(row) {
+  const fields = String(row?.month_song_key ?? "").split("|");
+  if (fields.length !== 4 || fields[1] !== "luminant" || !fields[2] || !fields[3]) return null;
+  return JSON.stringify(fields.slice(2).map(canonicalSettlementText));
+}
+
+function compatibleBusinessCodes(left, right) {
+  const leftCodes = luminantCodeIdentity(left), rightCodes = luminantCodeIdentity(right);
+  // Legacy integrated statements have no provider codes. Preserve their old
+  // business overlap, while distinct coded Luminant releases stay distinct.
+  return !leftCodes || !rightCodes || leftCodes === rightCodes;
+}
+
+export function validateLuminantImportRow(row) {
+  if (row?.import_format !== "luminant") return;
+  const period = row.settlement_ym;
+  if (typeof period !== "string" || !/^(19\d{2}|20\d{2}|21\d{2}|2200)-(0[1-9]|1[0-2])$/.test(period)) throw new Error("invalid_luminant_settlement_month");
+  const settlementYear = Number(period.slice(0, 4)), settlementMonth = Number(period.slice(5, 7));
+  const date = new Date(Date.UTC(settlementYear, settlementMonth - 4, 1));
+  const occurrence = `${date.getUTCFullYear()}-${String(date.getUTCMonth() + 1).padStart(2, "0")}`;
+  if (row.occurrence_ym !== occurrence) throw new Error("invalid_luminant_occurrence_month");
+  for (const [field, expected] of [["settlement_year", settlementYear], ["settlement_month", settlementMonth],
+    ["occurrence_year", date.getUTCFullYear()], ["occurrence_month", date.getUTCMonth() + 1]]) {
+    if (row[field] !== undefined && row[field] !== expected) throw new Error("invalid_luminant_period_metadata");
+  }
+  if (!Number.isSafeInteger(row.import_occurrence) || row.import_occurrence < 1) throw new Error("invalid_luminant_row_occurrence");
+  if (!Number.isSafeInteger(row.source_row_no) || row.source_row_no < 1) throw new Error("invalid_luminant_source_row");
+  if (typeof row.settlement_amount !== "number" || !Number.isFinite(row.settlement_amount)) throw new Error("invalid_luminant_settlement_amount");
+  if (!Number.isSafeInteger(row.original_count)) throw new Error("invalid_luminant_count");
+  for (const field of ["adjusted_count", "analysis_count"]) {
+    if (row[field] !== undefined && row[field] !== null && !Number.isSafeInteger(row[field])) throw new Error("invalid_luminant_count");
+  }
+  if (row.gross_amount !== undefined && (typeof row.gross_amount !== "number" || !Number.isFinite(row.gross_amount))) throw new Error("invalid_luminant_gross_amount");
+  for (const field of ["artist", "album_title", "song_title", "original_platform", "original_service", "source_key", "month_song_key"]) {
+    if (typeof row[field] !== "string" || !row[field].trim()) throw new Error("invalid_luminant_business_metadata");
+  }
+  if (row.distributor !== "루미넌트" || row.source_key !== `${row.original_platform}|${row.original_service}`) throw new Error("invalid_luminant_business_metadata");
+  const codes = String(row.month_song_key).split("|");
+  if (codes.length !== 4 || codes[0] !== period || codes[1] !== "luminant" || !codes[2].trim() || !codes[3].trim()) throw new Error("invalid_luminant_code_metadata");
+  if ((row.album_code !== undefined && row.album_code !== codes[2]) || (row.song_code !== undefined && row.song_code !== codes[3])) throw new Error("invalid_luminant_code_metadata");
+  const prefix = row.import_business_prefix, seenCodes = new Set();
+  let currentCount = null, totalCount = 0;
+  if (!Array.isArray(prefix) || !prefix.length) throw new Error("invalid_luminant_business_prefix");
+  for (const entry of prefix) {
+    if (!Array.isArray(entry) || entry.length !== 3 || typeof entry[0] !== "string" || !entry[0].trim() ||
+        typeof entry[1] !== "string" || !entry[1].trim() || !Number.isSafeInteger(entry[2]) || entry[2] < 1) throw new Error("invalid_luminant_business_prefix");
+    const key = JSON.stringify(entry.slice(0, 2).map(canonicalSettlementText));
+    if (seenCodes.has(key)) throw new Error("invalid_luminant_business_prefix");
+    seenCodes.add(key);
+    totalCount += entry[2];
+    if (!Number.isSafeInteger(totalCount)) throw new Error("invalid_luminant_business_prefix");
+    if (key === luminantCodeIdentity(row)) currentCount = entry[2];
+  }
+  if (currentCount !== row.import_occurrence) throw new Error("invalid_luminant_business_prefix");
+}
+
 export function countSettlementBusinessMatches(existingRows, row) {
   const key = settlementImportIdentity(row, true), amount = identityAmount(row);
   return existingRows.reduce((count, existing) => count + (settlementImportIdentity(existing, true) === key &&
-    Math.abs(identityAmount(existing) - amount) < 0.0000001 ? 1 : 0), 0);
+    compatibleBusinessCodes(existing, row) && Math.abs(identityAmount(existing) - amount) < 0.0000001 ? 1 : 0), 0);
+}
+
+export function hasSettlementBusinessImportOccurrence(existingRows, row) {
+  if (row.import_format !== "luminant") return countSettlementBusinessMatches(existingRows, row) >= row.import_occurrence;
+  const key = settlementImportIdentity(row, true), amount = identityAmount(row), codedCounts = new Map();
+  let uncodedCount = 0;
+  for (const existing of existingRows) {
+    if (settlementImportIdentity(existing, true) !== key || Math.abs(identityAmount(existing) - amount) >= 0.0000001) continue;
+    const code = luminantCodeIdentity(existing);
+    if (code) codedCounts.set(code, (codedCounts.get(code) || 0) + 1);
+    else uncodedCount++;
+  }
+  const currentCode = luminantCodeIdentity(row);
+  if ((codedCounts.get(currentCode) || 0) >= row.import_occurrence) return true;
+  // Prefix counts span the whole selected statement. After coded historical
+  // matches are consumed, allocate each uncoded integrated row once, including
+  // when the preceding raw rows were posted in an earlier request chunk.
+  let uncodedUsedBefore = 0;
+  for (const [albumCode, songCode, count] of row.import_business_prefix) {
+    const code = JSON.stringify([albumCode, songCode].map(canonicalSettlementText));
+    const countBefore = count - (code === currentCode ? 1 : 0);
+    uncodedUsedBefore += Math.max(0, countBefore - (codedCounts.get(code) || 0));
+  }
+  return uncodedCount > uncodedUsedBefore;
 }
 
 function providerIdentity(row) {
@@ -408,7 +492,7 @@ export function mergeImportRows(existingRows, incomingRows, mappings = []) {
   const rows = existingRows.slice(), exact = new Map(), business = new Map(), incomingRaw = new Map();
   const add = (map, key, row) => {
     if (!map.has(key)) map.set(key, []);
-    map.get(key).push({ amount: identityAmount(row), used: false });
+    map.get(key).push({ amount: identityAmount(row), row, used: false });
   };
   for (const row of existingRows) {
     add(exact, settlementImportIdentity(row), row);
@@ -417,10 +501,12 @@ export function mergeImportRows(existingRows, incomingRows, mappings = []) {
   const resolvePlatform = buildSettlementImportPlatformResolver(existingRows, mappings);
   let appended = 0, duplicates = 0;
   for (const input of incomingRows) {
-    const raw = input.import_format === "minerva";
+    const raw = isRawSettlementImport(input);
     const row = raw ? { ...input } : input;
+    validateLuminantImportRow(row);
     if (raw) {
-      const physicalKey = JSON.stringify([canonicalSettlementText(row.source_file), identityCount(row.source_row_no, -1), settlementImportIdentity(row, true)]);
+      const physicalKey = JSON.stringify([canonicalSettlementText(row.source_file), identityCount(row.source_row_no, -1),
+        settlementImportIdentity(row, true), luminantCodeIdentity(row)]);
       const amount = identityAmount(row);
       if ((incomingRaw.get(physicalKey) || []).some(candidate => Math.abs(candidate.amount - amount) < 0.0000001)) {
         duplicates++;
@@ -431,10 +517,15 @@ export function mergeImportRows(existingRows, incomingRows, mappings = []) {
     }
     const map = raw ? business : exact;
     const key = settlementImportIdentity(row, raw), amount = identityAmount(row);
-    const match = (map.get(key) || []).find(candidate => (!raw || !candidate.used) && Math.abs(candidate.amount - amount) < 0.0000001);
+    const candidates = (map.get(key) || []).filter(candidate => (!raw || !candidate.used) &&
+      (!raw || compatibleBusinessCodes(candidate.row, row)) && Math.abs(candidate.amount - amount) < 0.0000001);
+    // Prefer an exact coded release over an uncoded integrated overlap so the
+    // latter can still match another release from this same statement.
+    const codes = raw ? luminantCodeIdentity(row) : null;
+    const match = (codes && candidates.find(candidate => luminantCodeIdentity(candidate.row) === codes)) || candidates[0];
     if (match) {
-      // Raw workbooks can contain legitimate identical rows. Consume an old
-      // match once, preserving the incoming file's multiplicity on reimport.
+      // Raw statements may contain legitimate equal-valued rows. Consume each
+      // old match once, preserving the incoming statement's multiplicity.
       if (raw) match.used = true;
       duplicates++;
       continue;
@@ -483,17 +574,26 @@ export async function seedSnapshotChunk(env, { snapshotVersion, chunkNo, rows, f
   const no = Number(chunkNo);
   if (!Number.isInteger(no) || no < 0) throw new Error("invalid_chunk_no");
   if (!Array.isArray(rows) || rows.length > CHUNK_SIZE) throw new Error("invalid_chunk_rows");
+  const validateIncoming = incoming => {
+    for (const row of incoming) validateLuminantImportRow(row);
+    const hasMinerva = incoming.some(row => row?.import_format === "minerva");
+    const hasLuminant = incoming.some(row => row?.import_format === "luminant");
+    if (hasLuminant && mode !== "append") throw new Error("luminant_append_required");
+    if (hasMinerva && mode !== "append") throw new Error("minerva_append_required");
+    if ((hasMinerva || hasLuminant) && incoming.some(row => !isRawSettlementImport(row))) throw new Error("mixed_import_formats");
+  };
+  // Reject invalid raw metadata before staging anything; repeat across all
+  // staged chunks before publishing so a later chunk cannot bypass the guard.
+  validateIncoming(rows);
+  const expectedRows = Number(totalRows);
+  if (finalChunk && (!Number.isInteger(expectedRows) || expectedRows < 0)) throw new Error("invalid_total_rows");
   const beforeMeta = await getMeta(env);
   if (beforeMeta?.snapshotVersion === version) throw new Error("snapshot_version_already_active");
   await putPrivateJson(env, b, `${PREFIX}/source/${version}/${String(no).padStart(4, "0")}.json`, rows);
   if (finalChunk) {
-    const expectedRows = Number(totalRows);
-    if (!Number.isInteger(expectedRows) || expectedRows < 0) throw new Error("invalid_total_rows");
     const chunkCount = no + 1;
     const incoming = await readStagedRows(env, version, chunkCount, expectedRows);
-    const hasMinerva = incoming.some(row => row?.import_format === "minerva");
-    if (hasMinerva && mode !== "append") throw new Error("minerva_append_required");
-    if (mode === "append" && hasMinerva && incoming.some(row => row?.import_format !== "minerva")) throw new Error("mixed_import_formats");
+    validateIncoming(incoming);
     const oldMeta = await getMeta(env);
     if (mode === "append") {
       const current = await snapshotForAppend(env, oldMeta);
@@ -588,7 +688,8 @@ export async function removeSnapshotRowById(env, id) {
 }
 
 export function getR2Status(env) {
-  return { r2Ready: !!bucket(env), supportsAppend: true, binding: env.MEDIA ? "MEDIA" : env.SETTLEMENT_CACHE ? "SETTLEMENT_CACHE" : null };
+  return { r2Ready: !!bucket(env), supportsAppend: true, supportsLuminant: true,
+    binding: env.MEDIA ? "MEDIA" : env.SETTLEMENT_CACHE ? "SETTLEMENT_CACHE" : null };
 }
 
 function readManifestFromMeta(meta) {

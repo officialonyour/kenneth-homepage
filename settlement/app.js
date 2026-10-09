@@ -163,11 +163,22 @@
   function findHeader(matrix,required){for(let i=0;i<Math.min(20,matrix.length);i++){const set=new Set((matrix[i]||[]).map(x=>String(x??"").trim()));if(required.every(x=>set.has(x)))return i}return -1}
   function rowsFromSheet(ws,headerMap,required){const matrix=XLSX.utils.sheet_to_json(ws,{header:1,defval:null,raw:true});const hi=findHeader(matrix,required);if(hi<0)throw new Error(`${required.join(", ")} 헤더를 찾지 못했습니다.`);const headers=matrix[hi].map(h=>headerMap[String(h??"").trim()]||null),out=[];for(let i=hi+1;i<matrix.length;i++){const line=matrix[i]||[],r={};headers.forEach((k,j)=>{if(k)r[k]=line[j]});if(r.song_title&&String(r.song_title).trim())out.push(r)}return out}
   async function parseFile(file){
-    if(!window.XLSX||!window.SettlementImport)throw new Error("엑셀 파서가 로드되지 않았습니다. 새로고침해주세요.");
-    const wb=await XLSX.read(await file.arrayBuffer(),{type:"array",cellDates:true});
-    return SettlementImport.parseWorkbook(wb,file.name);
+    if(!window.SettlementImport)throw new Error("정산서 파서가 로드되지 않았습니다. 새로고침해주세요.");
+    const buffer=await file.arrayBuffer();
+    if(/\.csv$/i.test(file.name)){
+      if(!SettlementImport.inspectCsv||!SettlementImport.parseCsv)throw new Error("루미넌트 CSV 기능이 아직 로드되지 않았습니다. 새로고침해주세요.");
+      let csvText;
+      try{csvText=new TextDecoder("utf-8",{fatal:true}).decode(buffer)}
+      catch{try{csvText=new TextDecoder("euc-kr",{fatal:true}).decode(buffer)}catch{throw new Error("CSV 문자 인코딩을 읽을 수 없습니다. UTF-8 CSV로 다시 저장해주세요.")}}
+      const inspection=SettlementImport.inspectCsv(csvText,file.name);
+      return {file,format:inspection.format,csvText,inspection,settlementYm:""};
+    }
+    if(!window.XLSX)throw new Error("엑셀 파서가 로드되지 않았습니다. 새로고침해주세요.");
+    const wb=await XLSX.read(buffer,{type:"array",cellDates:true});
+    const result=SettlementImport.parseWorkbook(wb,file.name);
+    return {file,format:result.format,result};
   }
-  let fileSelection=0,importBusy=false;
+  let fileSelection=0,importBusy=false,importDrafts=[];
   function resetImportPreview(){
     state.importRows=[];state.importMappings=[];state.importFile="";state.importMode="replace";
     $("#previewCount").textContent="0건";
@@ -177,43 +188,74 @@
     $("#importProgressBar").style.width="0%";
     $("#importButton").disabled=true;
   }
+  function renderCsvPeriodFields(){
+    const csvDrafts=importDrafts.map((draft,index)=>({draft,index})).filter(x=>x.draft.format==="luminant");
+    $("#csvPeriodFields").classList.toggle("hidden",!csvDrafts.length);
+    $("#csvPeriodsBody").innerHTML=csvDrafts.map(({draft,index})=>`<tr><td><b>${esc(draft.file.name)}</b><small>${num(draft.inspection.rowCount)}건 · ${money(draft.inspection.revenue)}</small></td><td><input type="month" min="1900-01" max="2200-12" data-csv-index="${index}" value="${esc(draft.settlementYm)}" aria-label="${esc(draft.file.name)} 정산월" required /></td><td id="csvOccurrence-${index}">정산월 선택</td></tr>`).join("");
+  }
+  function renderImportPreview(){
+    resetImportPreview();
+    const missing=importDrafts.filter(draft=>draft.format==="luminant"&&!draft.settlementYm);
+    if(missing.length){
+      $("#fileInfo").textContent=`${importDrafts.length}개 파일 · 정산월 ${missing.length}개 선택 필요`;
+      $("#importSummary").className="import-summary empty-state";
+      $("#importSummary").textContent="루미넌트 CSV마다 정산월을 선택해주세요. 9월 정산은 6월 발생분으로 반영합니다.";
+      return;
+    }
+    try{
+      const results=importDrafts.map(draft=>draft.format==="luminant"?SettlementImport.parseCsv(draft.csvText,draft.file.name,{settlementYm:draft.settlementYm}):draft.result);
+      const rawPeriods=new Set();
+      for(const result of results){
+        if(!["minerva","luminant"].includes(result.format))continue;
+        const period=result.settlementYm||result.rows[0]?.settlement_ym,key=`${result.format}|${period}`;
+        if(rawPeriods.has(key))throw new Error("같은 정산월의 동일 유통사 원본 파일은 하나씩 반영해주세요. 서로 다른 월은 함께 선택할 수 있습니다.");
+        rawPeriods.add(key);
+      }
+      const rows=results.flatMap(r=>r.rows),mappings=results.flatMap(r=>r.mappings);
+      if(!rows.length)throw new Error("가져올 세부 정산내역이 없습니다.");
+      const stats=applyCountQuality(rows),revenue=rows.reduce((sum,r)=>sum+(Number(r.settlement_amount)||0),0),dates=rows.map(r=>r.occurrence_ym).filter(Boolean).sort();
+      state.importRows=rows;state.importMappings=mappings;state.importFile=importDrafts.map(d=>d.file.name).join("; ");
+      state.importMode=results.every(r=>["minerva","luminant"].includes(r.format))?"append":"replace";
+      const append=state.importMode==="append";
+      $("#fileInfo").textContent=`${importDrafts.length}개 파일 · 세부 정산 ${num(rows.length)}건 · ${append?"기존 자료에 추가":"통합관리 엑셀"}`;
+      $("#previewCount").textContent=`${num(rows.length)}건`;
+      $("#importSummary").className="import-summary";
+      $("#importSummary").innerHTML=`<div class="summary-grid"><div class="summary-box"><span>세부 정산행</span><strong>${num(rows.length)}건</strong></div><div class="summary-box"><span>수익 기간</span><strong>${esc(dates[0]||"-")} ~ ${esc(dates.at(-1)||"-")}</strong></div><div class="summary-box"><span>정산금액 합계</span><strong>${money(revenue)}</strong></div></div><p class="muted">${append?"원본 정산서를 기존 자료에 추가합니다. 이미 반영된 내역은 중복 제외합니다.":"통합관리 엑셀로 전체 분석자료를 갱신합니다."}</p><p class="muted">실제 ${num(stats.actual)}행 · 0카운트 보정 ${num(stats.zero_adjusted)}행 · 추정 ${num(stats.estimated)}행 · 미제공 ${num(stats.missing)}행</p>`;
+      $("#previewBody").innerHTML=rows.slice(0,12).map(x=>`<tr><td>${num(x.source_row_no)}</td><td>${esc(x.occurrence_ym||"-")}</td><td>${esc(x.distributor)}</td><td>${esc(x.song_title)}</td><td>${esc(x.platform||"-")}</td><td class="num">${money(x.settlement_amount)}</td><td class="num">${x.analysis_count===null?'-':num(x.analysis_count)}</td><td>${countBadge(x.count_basis)}</td></tr>`).join("");
+      $("#previewTableWrap").classList.remove("hidden");
+      $("#importButton").disabled=false;
+    }catch(e){
+      resetImportPreview();$("#fileInfo").textContent=e.message;
+      $("#importSummary").className="import-summary empty-state";$("#importSummary").textContent=e.message;toast(e.message,"error");
+    }
+  }
+  function handleCsvPeriodChange(e){
+    if(importBusy)return;
+    const index=Number(e.target?.dataset?.csvIndex),draft=importDrafts[index];
+    if(!draft||draft.format!=="luminant")return;
+    draft.settlementYm=e.target.value;
+    const valid=/^(19\d{2}|20\d{2}|21\d{2}|2200)-(0[1-9]|1[0-2])$/.test(draft.settlementYm);
+    $("#csvOccurrence-"+index).textContent=valid?shiftYmClient(draft.settlementYm,-3):"정산월 선택";
+    renderImportPreview();
+  }
   async function handleFiles(input){
     if(importBusy)return;
-    const files=Array.from(input||[]);if(!files.length)return;
-    const selection=++fileSelection;
-    resetImportPreview();
+    const files=Array.from(input||[]),selection=++fileSelection;
+    importDrafts=[];resetImportPreview();renderCsvPeriodFields();
+    if(!files.length){$("#fileInfo").classList.add("hidden");$("#importSummary").textContent="파일을 선택하면 전체 행·기간·수익·카운트 품질을 먼저 검사합니다.";return}
     $("#fileInfo").classList.remove("hidden");
     $("#fileInfo").textContent=`${files.map(f=>f.name).join(" · ")} · 분석 중…`;
     $("#importSummary").className="import-summary empty-state";
     $("#importSummary").textContent="정산서 형식과 금액을 확인하고 있습니다.";
     try{
-      if(files.some(f=>! /\.xlsx$/i.test(f.name)))throw new Error("XLSX 파일만 선택해주세요.");
-      const results=[];
-      for(const file of files){const result=await parseFile(file);if(selection!==fileSelection)return;results.push(result)}
-      if(results.length>1&&results.some(r=>r.format!=="minerva"))throw new Error("통합관리 엑셀은 한 파일씩 반영해주세요. 미네르바 원본 정산서는 여러 파일을 함께 선택할 수 있습니다.");
-      const rawPeriods=new Set();
-      for(const result of results){
-        if(result.format!=="minerva")continue;
-        const period=result.settlementYm||result.rows[0]?.settlement_ym;
-        if(rawPeriods.has(period))throw new Error("같은 정산월의 미네르바 파일은 하나씩 반영해주세요. 서로 다른 월의 파일은 함께 선택할 수 있습니다.");
-        rawPeriods.add(period);
-      }
-      const rows=results.flatMap(r=>r.rows),mappings=results.flatMap(r=>r.mappings);
-      if(!rows.length)throw new Error("가져올 세부 정산내역이 없습니다.");
-      const stats=applyCountQuality(rows),revenue=rows.reduce((sum,r)=>sum+(Number(r.settlement_amount)||0),0),dates=rows.map(r=>r.occurrence_ym).filter(Boolean).sort();
-      state.importRows=rows;state.importMappings=mappings;state.importFile=files.map(f=>f.name).join("; ");
-      state.importMode=results.every(r=>r.format==="minerva")?"append":"replace";
-      const append=state.importMode==="append";
-      $("#fileInfo").textContent=`${files.length}개 파일 · 세부 정산 ${num(rows.length)}건 · ${append?"기존 자료에 추가":"통합관리 엑셀"}`;
-      $("#previewCount").textContent=`${num(rows.length)}건`;
-      $("#importSummary").className="import-summary";
-      $("#importSummary").innerHTML=`<div class="summary-grid"><div class="summary-box"><span>세부 정산행</span><strong>${num(rows.length)}건</strong></div><div class="summary-box"><span>수익 기간</span><strong>${esc(dates[0]||"-")} ~ ${esc(dates.at(-1)||"-")}</strong></div><div class="summary-box"><span>정산금액 합계</span><strong>${money(revenue)}</strong></div></div><p class="muted">${append?"미네르바 원본 정산서를 기존 자료에 추가합니다. 이미 반영된 내역은 중복 제외합니다.":"통합관리 엑셀로 전체 분석자료를 갱신합니다."}</p><p class="muted">실제 ${num(stats.actual)}행 · 0카운트 보정 ${num(stats.zero_adjusted)}행 · 추정 ${num(stats.estimated)}행 · 미제공 ${num(stats.missing)}행</p>`;
-      $("#previewBody").innerHTML=rows.slice(0,12).map(x=>`<tr><td>${num(x.source_row_no)}</td><td>${esc(x.occurrence_ym||"-")}</td><td>${esc(x.distributor)}</td><td>${esc(x.song_title)}</td><td>${esc(x.platform||"-")}</td><td class="num">${money(x.settlement_amount)}</td><td class="num">${x.analysis_count===null?'-':num(x.analysis_count)}</td><td>${countBadge(x.count_basis)}</td></tr>`).join("");
-      $("#previewTableWrap").classList.remove("hidden");
-      $("#importButton").disabled=false;
+      if(files.some(f=>! /\.(xlsx|csv)$/i.test(f.name)))throw new Error("XLSX 또는 루미넌트 CSV 파일을 선택해주세요.");
+      const drafts=[];
+      for(const file of files){const draft=await parseFile(file);if(selection!==fileSelection)return;drafts.push(draft)}
+      if(drafts.length>1&&drafts.some(d=>!["minerva","luminant"].includes(d.format)))throw new Error("통합관리 엑셀은 한 파일씩 반영해주세요. 원본 정산서는 여러 월을 함께 선택할 수 있습니다.");
+      importDrafts=drafts;renderCsvPeriodFields();renderImportPreview();
     }catch(e){
       if(selection!==fileSelection)return;
-      resetImportPreview();$("#fileInfo").textContent=e.message;
+      importDrafts=[];resetImportPreview();renderCsvPeriodFields();$("#fileInfo").textContent=e.message;
       $("#importSummary").className="import-summary empty-state";$("#importSummary").textContent=e.message;toast(e.message,"error");
     }
   }
@@ -221,6 +263,7 @@
     if(state.importMode==="append"){
       const status=await api("/cache/seed",{force:true});
       if(!status.supportsAppend)throw new Error("추가 업로드 기능이 아직 배포되지 않았습니다. 배포 완료 후 새로고침해주세요.");
+      if(state.importRows.some(row=>row.import_format==="luminant")&&!status.supportsLuminant)throw new Error("루미넌트 업로드 기능이 아직 배포되지 않았습니다. 배포 완료 후 새로고침해주세요.");
     }
     const total=state.importRows.length,chunk=500;let result;
     for(let i=0,chunkNo=0;i<total;i+=chunk,chunkNo++){
@@ -234,7 +277,7 @@
     if(!state.importRows.length||importBusy)return;
     const total=state.importRows.length,chunk=300,batchId=`${state.importMode}-${Date.now()}-${Math.random().toString(36).slice(2,8)}`;
     let inserted=0,dupes=0,d1Ok=true,d1Error="";
-    importBusy=true;$("#fileInput").disabled=true;$("#importButton").disabled=true;$("#importButton").textContent="분석자료 준비…";$("#importProgress").classList.remove("hidden");
+    importBusy=true;$("#fileInput").disabled=true;$$("#csvPeriodFields input").forEach(x=>x.disabled=true);$("#importButton").disabled=true;$("#importButton").textContent="분석자료 준비…";$("#importProgress").classList.remove("hidden");
     try{
       const snapshot=await seedR2Snapshot(batchId);clearGetCache();
       try{
@@ -249,10 +292,10 @@
       const cacheSummary=state.importMode==="append"?`기존 분석자료 보존 · 신규 ${num(snapshot.appended)}건 · 중복 ${num(snapshot.duplicates)}건`:`전체 분석자료 ${num(total)}건 반영`;
       $("#importSummary").innerHTML=d1Ok?`<strong>정산 데이터 반영 완료</strong><p class="muted">${cacheSummary}</p><p class="muted">원본 신규 ${num(inserted)}건 · 중복 ${num(dupes)}건</p>`:`<strong>분석자료 반영 완료 · 원본 저장 재시도 필요</strong><p class="muted">${cacheSummary}</p><p class="muted">${esc(d1Error)}. 같은 파일을 다시 반영하면 중복을 제외하고 저장을 재시도합니다.</p>`;
       toast(d1Ok?"정산 데이터 반영이 완료됐습니다.":"분석자료는 반영됐습니다. 원본 저장은 다시 시도해주세요.",d1Ok?"ok":"error");
-      state.importRows=[];state.importMappings=[];$("#fileInput").value="";clearGetCache();
+      state.importRows=[];state.importMappings=[];importDrafts=[];renderCsvPeriodFields();$("#fileInput").value="";clearGetCache();
       try{await loadMeta()}catch(e){toast(`반영은 완료됐지만 화면 갱신에 실패했습니다: ${e.message}`,"error")}
     }catch(e){toast(e.message,"error")}
-    finally{importBusy=false;$("#fileInput").disabled=false;$("#importButton").textContent="정산 데이터 반영";$("#importButton").disabled=!state.importRows.length}
+    finally{importBusy=false;$("#fileInput").disabled=false;$$("#csvPeriodFields input").forEach(x=>x.disabled=false);$("#importButton").textContent="정산 데이터 반영";$("#importButton").disabled=!state.importRows.length}
   }
 
   async function saveManual(e){e.preventDefault();const fd=new FormData(e.currentTarget),obj=Object.fromEntries(fd.entries());if(obj.original_count==="")obj.original_count=null;else obj.original_count=Number(obj.original_count);obj.settlement_amount=Number(obj.settlement_amount||0);try{await api("/records",{method:"POST",body:JSON.stringify(obj)});e.currentTarget.reset();$("#manualDialog").close();toast("저장했습니다.");await Promise.all([loadMeta(),loadRecords()])}catch(err){toast(err.message,"error")}}
@@ -365,6 +408,6 @@
     finally{setDigitalManualBusy(false)}
   }
 
-  function bind(){ $("#loginForm").addEventListener("submit",login);$("#logoutButton").addEventListener("click",logout);$("#retryStatusButton").addEventListener("click",checkStatus);$$(`.nav-group[data-group]`).forEach(b=>b.addEventListener("click",()=>{const g=b.dataset.group,target=(g==="analysis"||g==="settlement")?(state.lastGroupPage[g]||groupDefault[g]):groupDefault[g];nav(target)}));$("#sectionTabs").addEventListener("click",e=>{const b=e.target.closest("[data-page]");if(b)nav(b.dataset.page)});$$(`#periodControl button`).forEach(b=>b.addEventListener("click",()=>setScope(b.dataset.scope)));$("#periodYear").addEventListener("change",e=>{state.periodYear=e.target.value;reloadForPeriod()});$("#periodMonth").addEventListener("change",e=>{state.periodMonth=e.target.value;reloadForPeriod()});$("#refreshButton").addEventListener("click",async()=>{clearGetCache();await loadMeta();await loadPage(state.page)});$("#trackSearch").addEventListener("input",debounce(renderTracks));$("#trackSort").addEventListener("change",renderTracks);$("#tracksBody").addEventListener("click",e=>{const b=e.target.closest("[data-track-open]");if(b)loadTrackDetail(b.dataset.trackOpen)});$("#trackBackButton").addEventListener("click",closeTrackDetail);$$("#trackRangeControl button").forEach(b=>b.addEventListener("click",()=>{state.trackRange=b.dataset.range;$$("#trackRangeControl button").forEach(x=>x.classList.toggle("active",x===b));renderTrackDetailCharts()}));const rr=debounce(()=>{state.recordPage=1;loadRecords()});for(const id of ["recordSearch","recordDistributor","recordPlatform","recordCountBasis"])$("#"+id).addEventListener(id==="recordSearch"?"input":"change",rr);$("#prevPage").addEventListener("click",()=>{if(state.recordPage>1){state.recordPage--;loadRecords()}});$("#nextPage").addEventListener("click",()=>{if(state.recordPage<state.recordPages){state.recordPage++;loadRecords()}});$("#recordsBody").addEventListener("click",e=>{const edit=e.target.closest("[data-digital-edit]");if(edit){const row=digitalRecordRows.get(edit.dataset.digitalEdit);if(row)openDigitalManual(row);return}const b=e.target.closest("[data-delete-id]");if(b)deleteRecord(Number(b.dataset.deleteId))});$("#exportCsvButton").addEventListener("click",exportCsv);$("#openManualButton").addEventListener("click",()=>$("#manualDialog").showModal());$("#manualForm").addEventListener("submit",saveManual);$$("[data-close-dialog]").forEach(b=>b.addEventListener("click",()=>{if(b.dataset.closeDialog==="digitalManualDialog"&&digitalManualBusy)return;$("#"+b.dataset.closeDialog).close()}));$("#openDigitalManualButton").addEventListener("click",()=>openDigitalManual());$("#digitalManualForm").addEventListener("submit",saveDigitalManual);$("#copyDigitalLoginIdButton").addEventListener("click",copyDigitalLoginId);$("#digitalAccountLink").addEventListener("click",e=>{if(digitalManualBusy)e.preventDefault()});$("#digitalManualForm").elements.settlement_ym.addEventListener("change",updateDigitalOccurrence);$("#digitalManualDialog").addEventListener("cancel",e=>{if(digitalManualBusy)e.preventDefault()});$("#fileInput").addEventListener("change",e=>handleFiles(e.target.files));const dz=$("#dropZone");for(const ev of ["dragenter","dragover"])dz.addEventListener(ev,e=>{e.preventDefault();dz.classList.add("drag")});for(const ev of ["dragleave","drop"])dz.addEventListener(ev,e=>{e.preventDefault();dz.classList.remove("drag")});dz.addEventListener("drop",e=>handleFiles(e.dataTransfer.files));$("#importButton").addEventListener("click",importRows)}
+  function bind(){ $("#loginForm").addEventListener("submit",login);$("#logoutButton").addEventListener("click",logout);$("#retryStatusButton").addEventListener("click",checkStatus);$$(`.nav-group[data-group]`).forEach(b=>b.addEventListener("click",()=>{const g=b.dataset.group,target=(g==="analysis"||g==="settlement")?(state.lastGroupPage[g]||groupDefault[g]):groupDefault[g];nav(target)}));$("#sectionTabs").addEventListener("click",e=>{const b=e.target.closest("[data-page]");if(b)nav(b.dataset.page)});$$(`#periodControl button`).forEach(b=>b.addEventListener("click",()=>setScope(b.dataset.scope)));$("#periodYear").addEventListener("change",e=>{state.periodYear=e.target.value;reloadForPeriod()});$("#periodMonth").addEventListener("change",e=>{state.periodMonth=e.target.value;reloadForPeriod()});$("#refreshButton").addEventListener("click",async()=>{clearGetCache();await loadMeta();await loadPage(state.page)});$("#trackSearch").addEventListener("input",debounce(renderTracks));$("#trackSort").addEventListener("change",renderTracks);$("#tracksBody").addEventListener("click",e=>{const b=e.target.closest("[data-track-open]");if(b)loadTrackDetail(b.dataset.trackOpen)});$("#trackBackButton").addEventListener("click",closeTrackDetail);$$("#trackRangeControl button").forEach(b=>b.addEventListener("click",()=>{state.trackRange=b.dataset.range;$$("#trackRangeControl button").forEach(x=>x.classList.toggle("active",x===b));renderTrackDetailCharts()}));const rr=debounce(()=>{state.recordPage=1;loadRecords()});for(const id of ["recordSearch","recordDistributor","recordPlatform","recordCountBasis"])$("#"+id).addEventListener(id==="recordSearch"?"input":"change",rr);$("#prevPage").addEventListener("click",()=>{if(state.recordPage>1){state.recordPage--;loadRecords()}});$("#nextPage").addEventListener("click",()=>{if(state.recordPage<state.recordPages){state.recordPage++;loadRecords()}});$("#recordsBody").addEventListener("click",e=>{const edit=e.target.closest("[data-digital-edit]");if(edit){const row=digitalRecordRows.get(edit.dataset.digitalEdit);if(row)openDigitalManual(row);return}const b=e.target.closest("[data-delete-id]");if(b)deleteRecord(Number(b.dataset.deleteId))});$("#exportCsvButton").addEventListener("click",exportCsv);$("#openManualButton").addEventListener("click",()=>$("#manualDialog").showModal());$("#manualForm").addEventListener("submit",saveManual);$$("[data-close-dialog]").forEach(b=>b.addEventListener("click",()=>{if(b.dataset.closeDialog==="digitalManualDialog"&&digitalManualBusy)return;$("#"+b.dataset.closeDialog).close()}));$("#openDigitalManualButton").addEventListener("click",()=>openDigitalManual());$("#digitalManualForm").addEventListener("submit",saveDigitalManual);$("#copyDigitalLoginIdButton").addEventListener("click",copyDigitalLoginId);$("#digitalAccountLink").addEventListener("click",e=>{if(digitalManualBusy)e.preventDefault()});$("#digitalManualForm").elements.settlement_ym.addEventListener("change",updateDigitalOccurrence);$("#digitalManualDialog").addEventListener("cancel",e=>{if(digitalManualBusy)e.preventDefault()});$("#fileInput").addEventListener("change",e=>handleFiles(e.target.files));$("#csvPeriodFields").addEventListener("input",handleCsvPeriodChange);$("#csvPeriodFields").addEventListener("change",handleCsvPeriodChange);const dz=$("#dropZone");for(const ev of ["dragenter","dragover"])dz.addEventListener(ev,e=>{e.preventDefault();dz.classList.add("drag")});for(const ev of ["dragleave","drop"])dz.addEventListener(ev,e=>{e.preventDefault();dz.classList.remove("drag")});dz.addEventListener("drop",e=>handleFiles(e.dataTransfer.files));$("#importButton").addEventListener("click",importRows)}
   document.addEventListener("DOMContentLoaded",()=>{bind();checkStatus()});
 })();

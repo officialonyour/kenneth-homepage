@@ -15,6 +15,8 @@
   const TEXT_FIELDS = ['artist','album_title','song_title','original_platform','original_service',
     'source_key','platform','revenue_source','notes','month_song_key'];
   const ENTITIES = {amp:'&',apos:"'",quot:'"',lt:'<',gt:'>',nbsp:' '};
+  const LUMINANT_HEADERS = ['플랫폼명','서비스명','곡명','앨범명','아티스트명',
+    '업체앨범코드','업체곡코드','카운트','인접권료','정산금액'];
 
   function text(value){return String(value??'').trim().normalize('NFC')}
   function header(value){return text(value).replace(/[\s\u200b\ufeff]/g,'')}
@@ -171,6 +173,135 @@
     result.settlementYm=ym;result.statementRevenue=expected;
     return result;
   }
+  function csvError(line,message){
+    return new Error(`루미넌트 CSV ${line}행: ${message}`);
+  }
+  function csvRecords(csvText){
+    if(typeof csvText!=='string')throw new Error('CSV 파일 내용을 읽지 못했습니다.');
+    const input=csvText.charCodeAt(0)===0xfeff?csvText.slice(1):csvText;
+    const records=[];
+    let values=[],field='',line=1,startLine=1,inQuotes=false,closedQuote=false,quotedField=false;
+    const endField=()=>{values.push(field);field='';closedQuote=false;quotedField=false;};
+    const endRecord=()=>{
+      endField();
+      // Ignore empty physical lines, but keep an empty multi-column record for validation.
+      if(values.length!==1||values[0].trim()!=='')records.push({values,line:startLine});
+      values=[];
+    };
+    for(let i=0;i<input.length;i++){
+      const char=input[i];
+      if(inQuotes){
+        if(char==='"'){
+          if(input[i+1]==='"'){field+='"';i++;}
+          else{inQuotes=false;closedQuote=true;}
+        }else if(char==='\r'||char==='\n'){
+          field+=char;
+          if(char==='\r'&&input[i+1]==='\n'){field+='\n';i++;}
+          line++;
+        }else field+=char;
+        continue;
+      }
+      if(char===','){endField();continue;}
+      if(char==='\r'||char==='\n'){
+        endRecord();
+        if(char==='\r'&&input[i+1]==='\n')i++;
+        line++;startLine=line;
+        continue;
+      }
+      if(closedQuote)throw csvError(line,'닫는 따옴표 뒤에는 쉼표 또는 줄바꿈만 올 수 있습니다.');
+      if(char==='"'){
+        if(field!==''||quotedField)throw csvError(line,'필드 중간의 따옴표가 올바르지 않습니다.');
+        inQuotes=true;quotedField=true;
+      }else field+=char;
+    }
+    if(inQuotes)throw csvError(startLine,'따옴표로 시작한 필드가 끝나지 않았습니다.');
+    if(values.length||field!==''||quotedField||closedQuote)endRecord();
+    return records;
+  }
+  function csvNumber(value,label,line,count=false){
+    const raw=String(value??'').trim();
+    const decimal=/^[+-]?(?:\d+(?:\.\d*)?|\.\d+)(?:[eE][+-]?\d+)?$/;
+    const grouped=/^[+-]?\d{1,3}(?:,\d{3})+(?:\.\d*)?(?:[eE][+-]?\d+)?$/;
+    if(!raw||!(decimal.test(raw)||grouped.test(raw)))
+      throw csvError(line,`${label}에 올바른 숫자가 필요합니다.`);
+    const result=Number(raw.replace(/,/g,''));
+    if(!Number.isFinite(result)||(count&&(!Number.isSafeInteger(result)||result<0)))
+      throw csvError(line,count?`${label}는 0 이상의 안전한 정수여야 합니다.`:`${label}에 유한한 숫자가 필요합니다.`);
+    return result;
+  }
+  function luminantTable(csvText){
+    const records=csvRecords(csvText);
+    if(!records.length)throw new Error('루미넌트 CSV 헤더와 세부 정산행이 없습니다.');
+    const first=records[0],names=first.values.map(value=>String(value).normalize('NFC'));
+    const columns=new Map();
+    for(let i=0;i<names.length;i++){
+      if(!names[i].trim())throw csvError(first.line,'빈 헤더가 있습니다.');
+      if(columns.has(names[i]))throw csvError(first.line,`헤더 ${names[i]}이 중복되었습니다.`);
+      columns.set(names[i],i);
+    }
+    const missing=LUMINANT_HEADERS.filter(name=>!columns.has(name));
+    if(missing.length)throw csvError(first.line,`필수 헤더가 없습니다: ${missing.join(', ')}.`);
+    const rows=[];
+    for(const record of records.slice(1)){
+      if(record.values.length!==names.length)
+        throw csvError(record.line,`열 개수가 헤더와 다릅니다. 예상 ${names.length}개, 실제 ${record.values.length}개입니다.`);
+      const get=name=>record.values[columns.get(name)];
+      for(const label of ['아티스트명','앨범명','곡명','플랫폼명','서비스명','업체앨범코드','업체곡코드'])
+        if(!text(get(label)))throw csvError(record.line,`${label}이 비어 있습니다.`);
+      const albumCode=text(get('업체앨범코드')),songCode=text(get('업체곡코드'));
+      if(albumCode.includes('|')||songCode.includes('|'))
+        throw csvError(record.line,'업체앨범코드와 업체곡코드에는 | 문자를 사용할 수 없습니다.');
+      rows.push({
+        source_row_no:record.line,artist:text(get('아티스트명')),album_title:text(get('앨범명')),
+        song_title:text(get('곡명')),original_platform:text(get('플랫폼명')),original_service:text(get('서비스명')),
+        album_code:albumCode,song_code:songCode,original_count:csvNumber(get('카운트'),'카운트',record.line,true),
+        gross_amount:csvNumber(get('인접권료'),'인접권료',record.line),
+        settlement_amount:csvNumber(get('정산금액'),'정산금액',record.line),
+        raw_gross_amount:get('인접권료'),raw_amount:get('정산금액'),
+        notes:`업체앨범코드: ${get('업체앨범코드')} · 업체곡코드: ${get('업체곡코드')} · 인접권료: ${get('인접권료')}`
+      });
+    }
+    if(!rows.length)throw new Error('가져올 루미넌트 세부 정산행이 없습니다.');
+    const revenue=rows.reduce((sum,row)=>sum+row.settlement_amount,0);
+    if(!Number.isFinite(revenue))throw new Error('루미넌트 정산금액 합계가 유한한 숫자가 아닙니다.');
+    return {rows,revenue};
+  }
+  function inspectCsv(csvText,filename){
+    const table=luminantTable(csvText);
+    return {format:'luminant',label:'루미넌트 CSV 정산서',rowCount:table.rows.length,revenue:table.revenue};
+  }
+  function parseCsv(csvText,filename,options){
+    const ym=options?.settlementYm,match=typeof ym==='string'&&ym.match(/^(\d{4})-(0[1-9]|1[0-2])$/);
+    if(!match||!makeYm(Number(match[1]),Number(match[2])))
+      throw new Error('루미넌트 CSV는 정산연월을 직접 지정해야 합니다. 1900~2200년의 YYYY-MM 형식으로 입력해주세요.');
+    const table=luminantTable(csvText),occurrenceYm=shiftYm(ym,-3),sourceFile=text(filename);
+    const rows=table.rows.map(row=>({
+      ...row,import_format:'luminant',distributor:'루미넌트',source_file:sourceFile,
+      settlement_year:Number(match[1]),settlement_month:Number(match[2]),settlement_ym:ym,
+      occurrence_year:Number(occurrenceYm.slice(0,4)),occurrence_month:Number(occurrenceYm.slice(5,7)),occurrence_ym:occurrenceYm,
+      source_key:`${row.original_platform}|${row.original_service}`,platform:row.original_platform,
+      adjusted_count:null,revenue_source:'',month_song_key:`${ym}|luminant|${row.album_code}|${row.song_code}`
+    }));
+    const occurrences=new Map();
+    for(const row of rows){
+      const identity=[row.distributor,row.settlement_ym,row.artist,row.album_title,row.song_title,
+        row.original_platform,row.original_service].map(decodeEntities);
+      identity.push(row.original_count);
+      const key=JSON.stringify(identity),groups=occurrences.get(key)||[];
+      let group=groups.find(value=>Math.abs(value.amount-row.settlement_amount)<0.0000001);
+      if(!group){group={amount:row.settlement_amount,codes:new Map()};groups.push(group);occurrences.set(key,groups);}
+      const codeKey=JSON.stringify([row.album_code,row.song_code]);
+      let code=group.codes.get(codeKey);
+      if(!code){code={album:row.album_code,song:row.song_code,count:0};group.codes.set(codeKey,code);}
+      row.import_occurrence=++code.count;
+      // The cumulative prefix lets each D1 chunk consume legacy uncoded
+      // overlaps once, while keeping different coded releases separate.
+      row.import_business_prefix=Array.from(group.codes.values(),value=>[value.album,value.song,value.count]);
+    }
+    const result=finish(rows,[],'luminant','루미넌트 CSV 정산서');
+    result.settlementYm=ym;
+    return result;
+  }
   function finish(rows,mappings,format,label){
     if(!rows.length)throw new Error('가져올 세부 정산행이 없습니다.');
     const dates=rows.map(row=>row.occurrence_ym).filter(Boolean).sort();
@@ -183,5 +314,5 @@
     const raw=sheet(wb,'정산서');if(raw)return minerva(raw,filename);
     throw new Error('지원하지 않는 정산서입니다. 통합 정산내역기록 또는 미네르바 정산서 XLSX를 선택해주세요.');
   }
-  global.SettlementImport={parseWorkbook};
+  global.SettlementImport={parseWorkbook,inspectCsv,parseCsv};
 })(typeof window!=='undefined'?window:globalThis);

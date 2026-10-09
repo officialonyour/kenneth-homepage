@@ -1,5 +1,5 @@
 import { json, requireDb } from "../../_shared/settlement.js";
-import { invalidateAnalyticsCache, countSettlementBusinessMatches, buildSettlementImportPlatformResolver } from "../../_shared/settlement-r2-cache.js";
+import { invalidateAnalyticsCache, hasSettlementBusinessImportOccurrence, buildSettlementImportPlatformResolver, isRawSettlementImport, validateLuminantImportRow } from "../../_shared/settlement-r2-cache.js";
 
 function text(v, max = 300) { return String(v ?? "").trim().slice(0, max); }
 function integer(v) { const n = Number(v); return Number.isFinite(n) ? Math.round(n) : null; }
@@ -22,22 +22,25 @@ async function normalize(input, batchId) {
   const adjustedCount = input.adjusted_count === null || input.adjusted_count === undefined || input.adjusted_count === "" ? null : integer(input.adjusted_count);
   const analysisCount = input.analysis_count === null || input.analysis_count === undefined || input.analysis_count === "" ? null : integer(input.analysis_count);
   const countBasis = ["actual", "zero_adjusted", "estimated", "missing"].includes(input.count_basis) ? input.count_basis : "missing";
+  // A raw Luminant statement owns its provider spelling and artist separators.
+  // They must survive D1 just as they do the browser/R2 upload, without truncation.
+  const rawText = (field, max) => input.import_format === "luminant" ? String(input[field] ?? "") : text(input[field], max);
   const r = {
     source_row_no: integer(input.source_row_no),
     distributor: text(input.distributor || "미분류", 120) || "미분류",
     source_file: text(input.source_file, 240),
-    settlement_year: integer(input.settlement_year) || (settlementYm ? Number(settlementYm.slice(0, 4)) : null),
-    settlement_month: integer(input.settlement_month) || (settlementYm ? Number(settlementYm.slice(5, 7)) : null),
+    settlement_year: input.import_format === "luminant" ? Number(settlementYm.slice(0, 4)) : integer(input.settlement_year) || (settlementYm ? Number(settlementYm.slice(0, 4)) : null),
+    settlement_month: input.import_format === "luminant" ? Number(settlementYm.slice(5, 7)) : integer(input.settlement_month) || (settlementYm ? Number(settlementYm.slice(5, 7)) : null),
     settlement_ym: settlementYm,
     occurrence_year: occurrenceYm ? Number(occurrenceYm.slice(0, 4)) : null,
     occurrence_month: occurrenceYm ? Number(occurrenceYm.slice(5, 7)) : null,
     occurrence_ym: occurrenceYm,
-    artist: text(input.artist, 180),
-    album_title: text(input.album_title, 240),
-    song_title: text(input.song_title, 240),
-    original_platform: text(input.original_platform, 240),
-    original_service: text(input.original_service, 300),
-    source_key: text(input.source_key, 500),
+    artist: rawText("artist", 180),
+    album_title: rawText("album_title", 240),
+    song_title: rawText("song_title", 240),
+    original_platform: rawText("original_platform", 240),
+    original_service: rawText("original_service", 300),
+    source_key: rawText("source_key", 500),
     platform: text(input.platform || "미분류", 160) || "미분류",
     original_count: originalCount,
     adjusted_count: adjustedCount,
@@ -47,12 +50,14 @@ async function normalize(input, batchId) {
     estimate_confidence: text(input.estimate_confidence, 40),
     settlement_amount: money(input.settlement_amount),
     revenue_source: text(input.revenue_source, 120),
-    notes: text(input.notes, 1200),
-    month_song_key: text(input.month_song_key, 360),
+    notes: rawText("notes", 1200),
+    month_song_key: rawText("month_song_key", 360),
     import_batch_id: batchId,
   };
-  const hashInput = [r.source_file, r.source_row_no, r.distributor, r.settlement_ym, r.occurrence_ym, r.artist, r.album_title, r.song_title, r.source_key, r.original_count, r.adjusted_count, r.settlement_amount].join("\u001f");
-  r.row_hash = await sha256(hashInput);
+  const hashFields = [r.source_file, r.source_row_no, r.distributor, r.settlement_ym, r.occurrence_ym, r.artist, r.album_title, r.song_title,
+    r.source_key, r.original_count, r.adjusted_count, r.settlement_amount];
+  if (input.import_format === "luminant") hashFields.push(r.month_song_key);
+  r.row_hash = await sha256(hashFields.join("\u001f"));
   return r;
 }
 
@@ -65,25 +70,32 @@ export async function onRequestPost({ request, env }) {
   if (!rows.length && !mappings.length) return json({ ok:false, error:"empty_import" }, 400);
   if (rows.length > 500) return json({ ok:false, error:"rows_chunk_too_large" }, 413);
   if (mappings.length > 500) return json({ ok:false, error:"mapping_chunk_too_large" }, 413);
+  if (rows.some(row => !row || typeof row !== "object" || Array.isArray(row))) return json({ ok:false, error:"invalid_import_row" }, 400);
   const batchId = text(body.batchId || crypto.randomUUID(), 100);
   const fileName = text(body.fileName, 240);
-  const rawRows = rows.filter(r => r?.import_format === "minerva");
+  const rawRows = rows.filter(isRawSettlementImport);
+  const rawProvider = rawRows.some(row => row.import_format === "luminant") ? "luminant" : "minerva";
+  if (rawRows.length && rows.some(row => !isRawSettlementImport(row))) return json({ ok:false, error:"mixed_import_formats" }, 400);
+  // The D1 endpoint always appends. Explicit replacement intent for a raw
+  // provider must fail before batches, mappings, or records can be changed.
+  if (rawRows.length && body.mode !== undefined && body.mode !== "append") return json({ ok:false, error:`${rawProvider}_append_required` }, 400);
   if (rawRows.some(r => !Number.isInteger(r.import_occurrence) || r.import_occurrence < 1)) {
-    return json({ ok:false, error:"invalid_minerva_row_occurrence" }, 400);
+    return json({ ok:false, error:`invalid_${rawProvider}_row_occurrence` }, 400);
   }
-  // Compare raw statements with prior imports by their original business fields.
-  // The ordinal spans the entire selected file, so equal-valued legitimate rows
-  // remain distinct even when this request is one of several upload chunks.
+  try { for (const row of rows) validateLuminantImportRow(row); }
+  catch (error) { return json({ ok:false, error:String(error?.message || "invalid_luminant_metadata") }, 400); }
+  // The ordinal spans every selected raw file and upload chunk. Comparing with
+  // prior batches keeps equal-valued legitimate rows and reimports idempotent.
   const priorRawRows = [];
   const rawPeriods = new Map(rawRows.map(r => [JSON.stringify([text(r.distributor,120),ym(r.settlement_ym)]), r]));
   for (const row of rawPeriods.values()) {
     const result = await db.prepare(`SELECT distributor,settlement_ym,artist,album_title,song_title,
-      original_platform,original_service,original_count,settlement_amount,platform
+      original_platform,original_service,original_count,settlement_amount,platform,month_song_key,notes
       FROM music_settlement_records
       WHERE distributor=? AND settlement_ym=? AND COALESCE(import_batch_id,'')<>?`)
       .bind(text(row.distributor,120),ym(row.settlement_ym),batchId).all();
     if (result?.success === false || !Array.isArray(result?.results)) {
-      return json({ ok:false, error:"minerva_existing_rows_read_failed" }, 503);
+      return json({ ok:false, error:`${rawProvider}_existing_rows_read_failed` }, 503);
     }
     priorRawRows.push(...result.results);
   }
@@ -94,7 +106,7 @@ export async function onRequestPost({ request, env }) {
     const providerResult = await db.prepare(`SELECT DISTINCT original_platform,original_service,platform FROM music_settlement_records`).all();
     if (mappingResult?.success === false || providerResult?.success === false ||
         !Array.isArray(mappingResult?.results) || !Array.isArray(providerResult?.results)) {
-      return json({ ok:false, error:"minerva_platform_mapping_read_failed" }, 503);
+      return json({ ok:false, error:`${rawProvider}_platform_mapping_read_failed` }, 503);
     }
     resolveRawPlatform = buildSettlementImportPlatformResolver(providerResult.results,mappingResult.results);
   }
@@ -116,19 +128,20 @@ export async function onRequestPost({ request, env }) {
     for (const input of chunk) {
       const r = await normalize(input, batchId);
       if (!r.song_title || !r.settlement_ym) { invalid++; continue; }
-      if (input.import_format === "minerva" && countSettlementBusinessMatches(priorRawRows, r) >= input.import_occurrence) {
+      r.import_format = input.import_format;
+      r.import_occurrence = input.import_occurrence;
+      if (input.import_format === "luminant") r.import_business_prefix = input.import_business_prefix;
+      if (isRawSettlementImport(input) && hasSettlementBusinessImportOccurrence(priorRawRows, r)) {
         duplicates++; continue;
       }
-      r.import_format = input.import_format;
-      if (input.import_format === "minerva") r.platform = text(resolveRawPlatform(r),160);
+      if (isRawSettlementImport(input)) r.platform = text(resolveRawPlatform(r),160);
       normalized.push(r);
     }
     if (!normalized.length) continue;
 
-    // Keep imports idempotent even after the occurrence-month correction.  The
-    // identity below intentionally excludes occurrence_ym because it is derived
-    // from settlement_ym by the fixed -3 month rule.
-    const checkStmts = normalized.map(r => r.import_format === "minerva"
+    // Occurrence month is derived by -3, so it never participates in legacy
+    // business overlap. Luminant hashes additionally preserve release codes.
+    const checkStmts = normalized.map(r => isRawSettlementImport(r)
       ? db.prepare(`SELECT id FROM music_settlement_records WHERE row_hash=? LIMIT 1`).bind(r.row_hash)
       : db.prepare(`SELECT id FROM music_settlement_records
       WHERE COALESCE(source_row_no,-1)=COALESCE(?,-1)
