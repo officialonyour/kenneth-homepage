@@ -1,7 +1,7 @@
 import { json } from "../../_shared/settlement.js";
 import { onRequestGet as readSnapshot } from "./cache/read.js";
 
-const VIEWS = new Set(["overview", "platforms", "tracks", "months", "distributors", "quality", "track-detail"]);
+const VIEWS = new Set(["overview", "platforms", "tracks", "months", "distributors", "quality", "track-detail", "all-trends"]);
 export async function onRequestGet(context) {
   const parameters = new URL(context.request.url).searchParams;
   const view = parameters.get("view") || "overview";

@@ -18,7 +18,7 @@
   function send(type, data = {}) {
     if (!worker) {
       if (typeof Worker !== "function") return Promise.reject(new Error("이 브라우저에서 분석 기능을 사용할 수 없습니다. 최신 Chrome 또는 Edge로 열어주세요."));
-      worker = new Worker("/settlement/analytics-worker.js?v=artist-aliases-v1-20261010", { type: "module" });
+      worker = new Worker("/settlement/analytics-worker.js?v=all-trends-v1-20261010", { type: "module" });
       worker.onmessage = ({ data: message }) => {
         const waiter = pending.get(message.id);
         if (!waiter) return;

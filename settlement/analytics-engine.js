@@ -1,3 +1,4 @@
+import { computeAllTrends } from "./all-trends-engine.js?v=all-trends-v1-20261010";
 /* Settlement calculations run in the authenticated browser worker. */
 function n(v) { const x = Number(v); return Number.isFinite(x) ? x : 0; }
 function pct(cur, prev) { return prev > 0 ? ((cur / prev) - 1) * 100 : null; }
@@ -203,6 +204,8 @@ export function computeAnalytics(snapshot, parameters = {}) {
     comparisonMode: scope === "month" ? "month" : "three_month",
     _d1: { strategy: snapshot.source, queries: d1RowsRead > 0 ? 1 : 0, rowsRead: d1RowsRead },
   };
+
+  if (view === "all-trends") return finish(computeAllTrends({...snapshot,rows:allRows},{...parameters,scope,period}));
 
   if (view === "overview") {
     const bc = basisCounts(sourceRows);

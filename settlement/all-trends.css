@@ -1,0 +1,112 @@
+/* All rules are scoped to the aggregate-trend mount. */
+#allTrendsRoot { min-width: 0; }
+#allTrendsRoot .at-content { display: grid; gap: 14px; min-width: 0; }
+#allTrendsRoot .at-scope-note { display: flex; align-items: center; justify-content: space-between; gap: 16px; padding: 16px 18px; border: 1px solid #cfe4de; border-radius: 16px; background: #f1faf7; color: #23453e; }
+#allTrendsRoot .at-scope-note strong { font-size: 14px; }
+#allTrendsRoot .at-scope-note p { margin: 6px 0 0; color: #668078; font-size: 12px; line-height: 1.6; }
+#allTrendsRoot .at-chip { display: inline-flex; align-items: center; align-self: flex-start; flex: 0 0 auto; padding: 6px 9px; border-radius: 999px; background: #eef3f3; color: #64777d; font-size: 10px; font-weight: 800; white-space: nowrap; }
+#allTrendsRoot .at-scope-note .at-chip { background: #dfefe9; color: #407166; }
+#allTrendsRoot .at-kpis { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 12px; }
+#allTrendsRoot .at-kpi { min-width: 0; padding: 18px 17px 16px; background: #fff; border: 1px solid var(--line, #dfe7e9); border-radius: 17px; box-shadow: 0 5px 18px rgba(15,23,27,.025); }
+#allTrendsRoot .at-kpi-label { display: block; color: #708087; font-size: 11px; font-weight: 750; line-height: 1.5; }
+#allTrendsRoot .at-kpi strong { display: block; margin: 11px 0 8px; font-size: clamp(21px, 1.9vw, 29px); line-height: 1.2; letter-spacing: -.035em; overflow-wrap: anywhere; font-variant-numeric: tabular-nums; }
+#allTrendsRoot .at-kpi-sub { margin: 0; color: #809096; font-size: 10px; line-height: 1.65; overflow-wrap: anywhere; }
+#allTrendsRoot .at-positive { color: #08796b; }
+#allTrendsRoot .at-negative { color: #b13b43; }
+#allTrendsRoot .at-neutral { color: #65747b; }
+#allTrendsRoot .at-chart-tools { display: flex; align-items: center; justify-content: space-between; gap: 14px; padding: 5px 2px 2px; }
+#allTrendsRoot .at-chart-tools strong { font-size: 12px; color: #53656c; }
+#allTrendsRoot .at-chart-tools p { margin: 4px 0 0; font-size: 11px; color: #7a898f; line-height: 1.5; }
+#allTrendsRoot .at-range { display: inline-flex; flex: 0 0 auto; gap: 2px; padding: 4px; border-radius: 12px; background: #e9eef0; }
+#allTrendsRoot .at-range button { border: 0; border-radius: 9px; padding: 9px 12px; color: #617078; background: transparent; font-size: 11px; font-weight: 800; white-space: nowrap; }
+#allTrendsRoot .at-range button.active { color: #08796b; background: #fff; box-shadow: 0 1px 5px rgba(0,0,0,.08); }
+#allTrendsRoot button:focus-visible { outline: 3px solid #79b9ac; outline-offset: 3px; }
+#allTrendsRoot .at-panel { min-width: 0; padding: 18px; border: 1px solid var(--line, #dfe7e9); border-radius: 17px; background: #fff; box-shadow: 0 6px 22px rgba(15,23,27,.028); }
+#allTrendsRoot .at-panel-head { display: flex; justify-content: space-between; align-items: flex-start; gap: 12px; margin-bottom: 15px; }
+#allTrendsRoot .at-heading { min-width: 0; }
+#allTrendsRoot .at-kicker { margin: 0 0 5px; color: #08796b; font-size: 10px; font-weight: 800; letter-spacing: .11em; }
+#allTrendsRoot h2 { margin: 0; font-size: 16px; letter-spacing: -.015em; line-height: 1.5; }
+#allTrendsRoot .at-subtitle { margin: 6px 0 0; color: #7a898f; font-size: 11px; line-height: 1.65; }
+#allTrendsRoot .at-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 14px; min-width: 0; }
+#allTrendsRoot .at-chart { min-width: 0; min-height: 260px; }
+#allTrendsRoot .at-chart svg { display: block; width: 100%; height: 290px; overflow: hidden; }
+#allTrendsRoot .at-chart-main svg { height: 310px; }
+#allTrendsRoot .at-grid-line { stroke: #e7ecee; stroke-width: 1; }
+#allTrendsRoot .at-zero-line { stroke: #98aaa9; stroke-width: 1.3; stroke-dasharray: 4 4; }
+#allTrendsRoot .at-axis-label { fill: #7c8b90; font-size: 12px; }
+#allTrendsRoot .at-axis-unit { fill: #7c8b90; font-size: 11px; }
+#allTrendsRoot .at-series { fill: none; stroke-width: 3; stroke-linecap: round; stroke-linejoin: round; }
+#allTrendsRoot .at-area { fill: rgba(8,121,107,.08); }
+#allTrendsRoot .at-point { stroke: #fff; stroke-width: 1.5; }
+#allTrendsRoot .at-point:hover { stroke-width: 3; }
+#allTrendsRoot .at-year-bar { fill: #08796b; }
+#allTrendsRoot .at-year-bar-negative { fill: #b13b43; }
+#allTrendsRoot .at-chart-empty { min-height: 260px; display: grid; place-items: center; padding: 20px; text-align: center; color: #8a989e; font-size: 12px; line-height: 1.65; }
+#allTrendsRoot .at-legend { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 14px; margin-bottom: 9px; }
+#allTrendsRoot .at-legend-item { display: inline-flex; align-items: center; gap: 6px; min-width: 0; max-width: 100%; color: #64747a; font-size: 11px; line-height: 1.5; overflow-wrap: anywhere; }
+#allTrendsRoot .at-legend-dot { display: inline-block; flex: 0 0 8px; width: 8px; height: 8px; border-radius: 50%; }
+#allTrendsRoot .at-track-link { border: 0; padding: 0; color: #233b42; font-weight: 750; text-align: left; background: transparent; overflow-wrap: anywhere; }
+#allTrendsRoot .at-track-link:hover { color: #08796b; text-decoration: underline; text-underline-offset: 3px; }
+#allTrendsRoot .at-ranks { display: grid; gap: 0; margin: 0; padding: 0; list-style: none; }
+#allTrendsRoot .at-rank { display: grid; grid-template-columns: 25px minmax(0, 1fr) auto; align-items: center; gap: 9px; padding: 15px 0; border-bottom: 1px solid #edf1f2; }
+#allTrendsRoot .at-rank:last-child { border-bottom: 0; }
+#allTrendsRoot .at-rank-no { display: grid; place-items: center; width: 25px; height: 25px; border-radius: 8px; color: #58746a; background: #edf5f1; font-size: 11px; font-weight: 850; }
+#allTrendsRoot .at-rank-main { min-width: 0; }
+#allTrendsRoot .at-rank-main button { font-size: 12px; line-height: 1.5; }
+#allTrendsRoot .at-rank-main span { display: block; margin-top: 4px; color: #8a989e; font-size: 10px; }
+#allTrendsRoot .at-rank-amount { font-size: 12px; font-variant-numeric: tabular-nums; white-space: nowrap; }
+#allTrendsRoot .at-table-panel { padding: 0; overflow: hidden; }
+#allTrendsRoot .at-table-panel .at-panel-head { padding: 17px 18px 0; }
+#allTrendsRoot .at-table-wrap { max-width: 100%; overflow-x: auto; -webkit-overflow-scrolling: touch; }
+#allTrendsRoot .at-table { width: 100%; border-collapse: collapse; font-size: 11px; }
+#allTrendsRoot .at-table th { padding: 11px; color: #65757c; background: #f7f9fa; border-bottom: 1px solid #dfe7e9; font-size: 10px; font-weight: 800; white-space: nowrap; text-align: left; }
+#allTrendsRoot .at-table td { padding: 11px; border-bottom: 1px solid #edf0f2; white-space: nowrap; }
+#allTrendsRoot .at-table tbody tr:hover { background: #f7fbfa; }
+#allTrendsRoot .at-table .at-num { text-align: right; font-variant-numeric: tabular-nums; }
+#allTrendsRoot .at-no-data-row { color: #96a2a8; }
+#allTrendsRoot .at-empty-cell { text-align: center; height: 110px; color: #8a989e; }
+#allTrendsRoot .at-footnote { padding: 0 3px; color: #819197; font-size: 11px; line-height: 1.7; }
+#allTrendsRoot .at-footnote p { margin: 0 0 4px; }
+#allTrendsRoot .at-status { min-height: 260px; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 12px; padding: 25px; color: #5a756d; background: #fff; border: 1px solid #dfe7e9; border-radius: 17px; text-align: center; font-size: 13px; }
+#allTrendsRoot .at-status p { margin: 0; font-size: 12px; color: #8a989e; line-height: 1.6; }
+#allTrendsRoot .at-status-loading .at-status-icon { width: 23px; height: 23px; border: 3px solid #dceee8; border-top-color: #08796b; border-radius: 50%; animation: at-spin .8s linear infinite; }
+#allTrendsRoot .at-status-error { color: #a2565d; }
+#allTrendsRoot .at-status-error .at-status-icon { display: grid; place-items: center; width: 27px; height: 27px; color: #ad5963; background: #fceff0; border-radius: 50%; font-weight: 850; }
+@keyframes at-spin { to { transform: rotate(360deg); } }
+@media (prefers-reduced-motion: reduce) { #allTrendsRoot .at-status-loading .at-status-icon { animation: none; } }
+@media (max-width: 1180px) {
+  #allTrendsRoot .at-kpis { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  #allTrendsRoot .at-chart-tools { align-items: flex-start; flex-wrap: wrap; }
+  #allTrendsRoot .at-kpi strong { font-size: 25px; }
+}
+@media (max-width: 950px) { #allTrendsRoot .at-grid { grid-template-columns: 1fr; } }
+@media (max-width: 760px) {
+  #allTrendsRoot .at-content { gap: 12px; }
+  #allTrendsRoot .at-scope-note { flex-direction: column; align-items: flex-start; gap: 10px; padding: 14px; }
+  #allTrendsRoot .at-kpis { gap: 9px; }
+  #allTrendsRoot .at-kpi { padding: 14px 12px; border-radius: 14px; }
+  #allTrendsRoot .at-kpi strong { font-size: 22px; }
+  #allTrendsRoot .at-kpi-label { font-size: 10px; }
+  #allTrendsRoot .at-kpi-sub { font-size: 9px; }
+  #allTrendsRoot .at-chart-tools { gap: 9px; }
+  #allTrendsRoot .at-range { width: 100%; }
+  #allTrendsRoot .at-range button { flex: 1; padding: 9px 5px; }
+  #allTrendsRoot .at-panel { padding: 15px 12px; }
+  #allTrendsRoot .at-panel-head { flex-wrap: wrap; gap: 7px; margin-bottom: 10px; }
+  #allTrendsRoot .at-panel-head .at-chip { font-size: 9px; }
+  #allTrendsRoot h2 { font-size: 15px; }
+  #allTrendsRoot .at-subtitle { font-size: 10px; }
+  #allTrendsRoot .at-chart svg, #allTrendsRoot .at-chart-main svg { height: 260px; }
+  #allTrendsRoot .at-axis-label { font-size: 24px; }
+  #allTrendsRoot .at-axis-unit { font-size: 20px; }
+  #allTrendsRoot .at-rank { padding: 12px 0; }
+  #allTrendsRoot .at-rank-amount { font-size: 11px; }
+  #allTrendsRoot .at-table-panel { padding: 0; }
+  #allTrendsRoot .at-table-panel .at-panel-head { padding: 15px 12px 0; }
+  #allTrendsRoot .at-footnote { font-size: 10px; }
+}
+@media (max-width: 380px) {
+  #allTrendsRoot .at-kpi strong { font-size: 19px; }
+  #allTrendsRoot .at-rank { grid-template-columns: 23px minmax(0, 1fr); }
+  #allTrendsRoot .at-rank-amount { grid-column: 2; }
+}
