@@ -9,7 +9,7 @@
   <link rel="stylesheet" href="./style.css?v=15" />
   <script defer src="./xlsx-local.js?v=5"></script>
   <script defer src="./import-parser.js?v=1"></script>
-  <script defer src="./read-client.js?v=2"></script>
+  <script defer src="./read-client.js?v=artist-aliases-v1-20261010"></script>
   <script defer src="./app.js?v=period-clarity-v1-20261009"></script>
 </head>
 <body>
@@ -172,7 +172,7 @@
   <dialog id="digitalManualDialog" class="modal digital-manual-modal" aria-labelledby="digitalManualTitle">
     <form id="digitalManualForm">
       <div class="modal-head"><div><p class="panel-kicker">DIGITAL RECORDS</p><h2 id="digitalManualTitle">디지털 레코즈 정산 입력</h2></div><button type="button" class="icon-btn" data-close-dialog="digitalManualDialog" aria-label="닫기">×</button></div>
-      <div class="digital-manual-track"><strong>오우야</strong><span>kenneth x ㅌ · 싱글앨범 오우야</span><small>유통사: 디지털 레코즈 · 플랫폼 미제공</small></div>
+      <div class="digital-manual-track"><strong>오우야</strong><span>Kenneth x TIEUT · 싱글앨범 오우야</span><small>유통사: 디지털 레코즈 · 플랫폼 미제공</small></div>
       <div class="digital-manual-account"><strong>디지털 레코즈 정산사이트</strong><label>로그인 아이디<input id="digitalLoginId" type="text" readonly autocomplete="off" aria-describedby="digitalAccountStatus" /></label><div class="digital-account-actions"><button id="copyDigitalLoginIdButton" type="button" class="btn btn-ghost btn-sm" disabled>아이디 복사</button><a id="digitalAccountLink" class="btn btn-ghost btn-sm" href="http://www.digitalrecords.co.kr/user/login.asp" target="_blank" rel="noopener noreferrer">정산사이트 열기 ↗</a></div><small id="digitalAccountStatus" class="manual-field-note" role="status" aria-live="polite"></small></div>
       <div class="form-grid">
         <label>정산월<input name="settlement_ym" type="month" required /></label>

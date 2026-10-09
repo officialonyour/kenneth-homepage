@@ -1,4 +1,4 @@
-import { computeAnalytics, computeMeta, computeRecords } from "./analytics-engine.js?v=2";
+import { computeAnalytics, computeMeta, computeRecords } from "./analytics-engine.js?v=artist-aliases-v1-20261010";
 
 let snapshot = null, staging = null;
 self.onmessage = ({ data }) => {

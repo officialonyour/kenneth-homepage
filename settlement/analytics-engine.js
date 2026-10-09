@@ -128,6 +128,24 @@ function uniqueJoin(items, key) {
   }
   return [...s].join(",");
 }
+
+// Confirmed artist aliases affect browser display/grouping only. The cached
+// source rows, import identities and other artist names remain unchanged.
+function canonicalArtist(value) {
+  if (typeof value !== "string") return value;
+  const artist = value.normalize("NFC").trim();
+  if (/^kenneth\s*x\s*(?:tieut|ㅌ)$/i.test(artist)) return "Kenneth x TIEUT";
+  if (/^이휘근\s*\(\s*kenneth\s*\)$/i.test(artist)) return "이휘근 (Kenneth)";
+  if (/^이휘근\s*(?:x|\{\]|\{\[)\s*김정섭\s*(?:x|\{\]|\{\[)\s*토이디$/i.test(artist)) return "이휘근 x 김정섭 x 토이디";
+  return value;
+}
+
+function normalizeArtistRows(rows) {
+  return rows.map(row => {
+    const artist = canonicalArtist(row.artist);
+    return artist === row.artist ? row : { ...row, artist };
+  });
+}
 function baseTrackRow(song, items) {
   return {
     song_title: song,
@@ -151,7 +169,7 @@ export function computeAnalytics(snapshot, parameters = {}) {
   const u = new URL("https://settlement.invalid/analytics");
   for (const [key, value] of Object.entries(parameters)) if (value !== null && value !== undefined) u.searchParams.set(key, value);
   const view = u.searchParams.get("view") || "overview";
-  const allRows = snapshot.rows || [];
+  const allRows = normalizeArtistRows(snapshot.rows || []);
   const d1RowsRead = 0;
   const finish = payload => ({ ...payload, _cache: { hit: false, strategy: "browser_snapshot_v1" }, _d1: { strategy: "r2_chunked_v1", queries: 0, rowsRead: 0, snapshotChunks: snapshot.chunkCount || 0 } });
   const activeDistributors = distinctCount(allRows, "distributor");
@@ -416,9 +434,9 @@ export function computeMeta(snapshot) {
 function txt(v,n=300){return String(v??"").trim().slice(0,n)}
 function includesText(r,q){
   if(!q)return true;
-  const needle=q.toLowerCase();
-  return [r.song_title,r.artist,r.album_title,r.platform,r.original_platform,r.original_service]
-    .some(v=>String(v||"").toLowerCase().includes(needle));
+  const needles=[q.toLowerCase(),String(canonicalArtist(q)).toLowerCase()];
+  return [r.song_title,r.artist,canonicalArtist(r.artist),r.album_title,r.platform,r.original_platform,r.original_service]
+    .some(v=>needles.some(needle=>String(v||"").toLowerCase().includes(needle)));
 }
 
 
@@ -447,6 +465,7 @@ export function computeRecords(snapshot, parameters = {}) {
     if(/^\d{4}-\d{2}$/.test(to)&&ym>to)return false;
     return true;
   });
+  rows=normalizeArtistRows(rows);
   rows.sort((a,b)=>String(b.occurrence_ym||"").localeCompare(String(a.occurrence_ym||"")) || Number(b.id||b.source_row_no||0)-Number(a.id||a.source_row_no||0));
   const total=rows.length,offset=(page-1)*limit;
   const pageRows=rows.slice(offset,offset+limit).map(r=>({
