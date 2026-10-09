@@ -6,11 +6,11 @@
   <meta name="color-scheme" content="light" />
   <title>케네쓰음원정산관리</title>
   <meta name="description" content="케네쓰 음원 정산 분석 및 모니터링" />
-  <link rel="stylesheet" href="./style.css?v=14" />
+  <link rel="stylesheet" href="./style.css?v=15" />
   <script defer src="./xlsx-local.js?v=5"></script>
   <script defer src="./import-parser.js?v=1"></script>
-  <script defer src="./read-client.js?v=1"></script>
-  <script defer src="./app.js?v=18"></script>
+  <script defer src="./read-client.js?v=2"></script>
+  <script defer src="./app.js?v=19"></script>
 </head>
 <body>
   <div id="toastHost" class="toast-host" aria-live="polite"></div>
@@ -151,7 +151,7 @@
       <section id="page-distributors" class="page"><div id="distributorCards" class="distributor-grid"></div><article class="panel table-panel"><div class="panel-head"><div><p class="panel-kicker">DISTRIBUTOR HEALTH</p><h2>유통사별 데이터 상태</h2></div></div><div class="table-wrap"><table class="data-table"><thead><tr><th>유통사</th><th class="num">누적수익</th><th class="num">비중</th><th class="num">정산건</th><th class="num">음원</th><th class="num">플랫폼</th><th>발생 최신월</th><th>정산 최신월</th><th class="num">실제카운트 행 비율</th></tr></thead><tbody id="distributorsBody"></tbody></table></div></article></section>
 
       <section id="page-records" class="page">
-        <div class="toolbar panel compact"><div class="filter-grid records-filter"><label>검색<input id="recordSearch" type="search" placeholder="곡명 · 아티스트 · 앨범 · 플랫폼" /></label><label>유통사<select id="recordDistributor"><option value="">전체</option></select></label><label>플랫폼<select id="recordPlatform"><option value="">전체</option></select></label><label>카운트<select id="recordCountBasis"><option value="">전체</option><option value="actual">실제</option><option value="zero_adjusted">0카운트 보정</option><option value="estimated">추정</option><option value="missing">미제공</option></select></label></div><div class="toolbar-actions"><button id="exportCsvButton" class="btn btn-ghost">CSV 내보내기</button><button id="openManualButton" class="btn btn-primary">직접 입력</button></div></div>
+        <div class="toolbar panel compact"><div class="filter-grid records-filter"><label>검색<input id="recordSearch" type="search" placeholder="곡명 · 아티스트 · 앨범 · 플랫폼" /></label><label>유통사<select id="recordDistributor"><option value="">전체</option></select></label><label>플랫폼<select id="recordPlatform"><option value="">전체</option></select></label><label>카운트<select id="recordCountBasis"><option value="">전체</option><option value="actual">실제</option><option value="zero_adjusted">0카운트 보정</option><option value="estimated">추정</option><option value="missing">미제공</option></select></label></div><div class="toolbar-actions"><button id="exportCsvButton" class="btn btn-ghost">CSV 내보내기</button><button id="openManualButton" class="btn btn-ghost" type="button">직접 입력</button><button id="openDigitalManualButton" class="btn btn-primary" type="button">디지털 레코즈 입력</button></div></div>
         <article class="panel table-panel"><div class="table-wrap"><table class="data-table"><thead><tr><th>수익월</th><th>정산월</th><th>유통사</th><th>곡명</th><th>플랫폼</th><th class="num">정산금액</th><th class="num">원본카운트</th><th class="num">분석카운트</th><th>카운트 구분</th><th></th></tr></thead><tbody id="recordsBody"></tbody></table></div><div class="pagination"><button id="prevPage" class="btn btn-ghost btn-sm">이전</button><span id="pageInfo">1 / 1</span><button id="nextPage" class="btn btn-ghost btn-sm">다음</button></div></article>
       </section>
 
@@ -167,6 +167,22 @@
     </main>
   </div>
 
-  <dialog id="manualDialog" class="modal"><form id="manualForm" method="dialog"><div class="modal-head"><div><p class="panel-kicker">MANUAL ENTRY</p><h2>정산내역 직접 입력</h2><p class="muted compact-note">음원 수익월은 정산년월에서 3개월 전으로 자동 계산됩니다.</p></div><button class="icon-btn" value="cancel">×</button></div><div class="form-grid"><label>정산년월<input name="settlement_ym" type="month" required /></label><label>유통사<input name="distributor" required /></label><label>아티스트<input name="artist" /></label><label>앨범명<input name="album_title" /></label><label>곡명<input name="song_title" required /></label><label>통합 플랫폼<input name="platform" /></label><label>원본 플랫폼<input name="original_platform" /></label><label>원본 서비스<input name="original_service" /></label><label>정산금액<input name="settlement_amount" type="number" step="0.000001" /></label><label>원본 카운트<input name="original_count" type="number" min="0" step="1" /></label><label class="span-2">비고<textarea name="notes" rows="3"></textarea></label></div><div class="modal-actions"><button class="btn btn-ghost" value="cancel">취소</button><button class="btn btn-primary" value="default">저장</button></div></form></dialog>
+  <dialog id="manualDialog" class="modal"><form id="manualForm" method="dialog"><div class="modal-head"><div><p class="panel-kicker">MANUAL ENTRY</p><h2>정산내역 직접 입력</h2><p class="muted compact-note">음원 수익월은 정산년월에서 3개월 전으로 자동 계산됩니다.</p></div><button type="button" class="icon-btn" data-close-dialog="manualDialog" aria-label="닫기">×</button></div><div class="form-grid"><label>정산년월<input name="settlement_ym" type="month" required /></label><label>유통사<input name="distributor" required /></label><label>아티스트<input name="artist" /></label><label>앨범명<input name="album_title" /></label><label>곡명<input name="song_title" required /></label><label>통합 플랫폼<input name="platform" /></label><label>원본 플랫폼<input name="original_platform" /></label><label>원본 서비스<input name="original_service" /></label><label>정산금액<input name="settlement_amount" type="number" step="0.000001" /></label><label>원본 카운트<input name="original_count" type="number" min="0" step="1" /></label><label class="span-2">비고<textarea name="notes" rows="3"></textarea></label></div><div class="modal-actions"><button type="button" class="btn btn-ghost" data-close-dialog="manualDialog">취소</button><button type="submit" class="btn btn-primary" value="default">저장</button></div></form></dialog>
+  <dialog id="digitalManualDialog" class="modal digital-manual-modal" aria-labelledby="digitalManualTitle">
+    <form id="digitalManualForm">
+      <div class="modal-head"><div><p class="panel-kicker">DIGITAL RECORDS</p><h2 id="digitalManualTitle">디지털 레코즈 정산 입력</h2></div><button type="button" class="icon-btn" data-close-dialog="digitalManualDialog" aria-label="닫기">×</button></div>
+      <div class="digital-manual-track"><strong>오우야</strong><span>kenneth x ㅌ · 싱글앨범 오우야</span><small>유통사: 디지털 레코즈 · 플랫폼 미제공</small></div>
+      <div class="digital-manual-account"><strong>디지털 레코즈 정산사이트</strong><label>로그인 아이디<input id="digitalLoginId" type="text" readonly autocomplete="off" aria-describedby="digitalAccountStatus" /></label><div class="digital-account-actions"><button id="copyDigitalLoginIdButton" type="button" class="btn btn-ghost btn-sm" disabled>아이디 복사</button><a id="digitalAccountLink" class="btn btn-ghost btn-sm" href="http://www.digitalrecords.co.kr/user/login.asp" target="_blank" rel="noopener noreferrer">정산사이트 열기 ↗</a></div><small id="digitalAccountStatus" class="manual-field-note" role="status" aria-live="polite"></small></div>
+      <div class="form-grid">
+        <label>정산월<input name="settlement_ym" type="month" required /></label>
+        <label>정산금액 (원)<input name="settlement_amount" type="number" min="0" step="0.000001" required placeholder="정산 내역의 금액" /></label>
+        <label class="span-2">수익월<input name="occurrence_ym" type="month" required /><small class="manual-field-note">정산월 3개월 전으로 자동 입력됩니다. 실제 수익월이 다르면 수정해주세요.</small></label>
+        <label>카운트 (선택)<input name="original_count" type="number" min="0" step="1" placeholder="없으면 비워두기" /></label>
+        <label>비고 (선택)<textarea name="notes" maxlength="1200" rows="2" placeholder="예: 이월"></textarea></label>
+      </div>
+      <p id="digitalManualMessage" class="form-message" role="status" aria-live="polite"></p>
+      <div class="modal-actions"><button type="button" class="btn btn-ghost" data-close-dialog="digitalManualDialog">취소</button><button id="digitalManualSave" type="submit" class="btn btn-primary">저장</button></div>
+    </form>
+  </dialog>
 </body>
 </html>

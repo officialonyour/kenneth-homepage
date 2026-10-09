@@ -34,7 +34,9 @@
     if(!r.ok||d.ok===false){
       if(String(d.error||"").includes("no such table"))throw new Error("D1에 002_settlement_analytics.sql을 먼저 실행해주세요.");
       if(raw.includes("Worker exceeded resource limits"))throw new Error("서버 처리 한도를 초과했습니다. 새 배포가 완료됐는지 확인한 뒤 Ctrl+F5로 새로고침해주세요.");
-      throw new Error(d.error||`HTTP ${r.status}`);
+      const messages={digital_manual_entry_required:"디지털 레코즈의 오우야 정산은 [디지털 레코즈 입력]에서 저장해주세요.",manual_month_already_imported:"이 정산월은 기존 정산내역에 이미 있습니다."};
+      const error=new Error(messages[d.error]||d.error||`HTTP ${r.status}`);
+      error.status=r.status;error.details=d;throw error;
     }
     if(method==="GET"&&d.processing==="browser_snapshot_v1"){
       if(!window.SettlementRead)throw new Error("분석 파일을 불러오지 못했습니다. Ctrl+F5로 새로고침해주세요.");
@@ -51,7 +53,9 @@
     return d;
   }
   function showLogin(){
-    clearGetCache();
+    clearGetCache();clearDigitalManualAccount();digitalRecordRows.clear();
+    const form=$("#digitalManualForm");if(form){form.reset();form.dataset.editing=""}
+    const dialog=$("#digitalManualDialog");if(dialog?.open)dialog.close();
     $("#appView").classList.add("hidden");$("#setupView").classList.add("hidden");$("#loginView").classList.remove("hidden");
   }
   function showSetup(){ $("#appView").classList.add("hidden");$("#loginView").classList.add("hidden");$("#setupView").classList.remove("hidden") }
@@ -79,7 +83,15 @@
   async function loadPage(page){try{if(page==="dashboard")await loadDashboard();else if(page==="months")await loadMonths();else if(page==="platforms")await loadPlatforms();else if(page==="tracks")await loadTracks();else if(page==="distributors")await loadDistributors();else if(page==="records")await loadRecords();else if(page==="quality")await loadQuality()}catch(e){toast(e.message,"error")}}
   function periodQuery(){const p=new URLSearchParams({scope:state.scope});if(state.scope==="year"&&state.periodYear)p.set("period",state.periodYear);if(state.scope==="month"&&state.periodMonth)p.set("period",state.periodMonth);return p.toString()}
   function comparisonLabel(d){const c=d?.currentWindow||[],p=d?.previousWindow||[];if(!c.length)return "기간 없음";if(d.comparisonMode==="month")return `${c[0]} vs ${p[0]||"-"}`;return `${c[0]}~${c.at(-1)} vs ${p[0]||"-"}~${p.at(-1)||"-"}`}
-  function applyPeriodUi(){$$(`#periodControl button`).forEach(x=>x.classList.toggle("active",x.dataset.scope===state.scope));$("#periodYear").classList.toggle("hidden",state.scope!=="year");$("#periodMonth").classList.toggle("hidden",state.scope!=="month");const note=state.scope==="all"?"전체 수익월 데이터를 분석합니다. 수익월 = 정산월 - 3개월입니다.":state.scope==="year"?`${state.periodYear}년 수익월 데이터를 분석합니다.`:`${state.periodMonth} 수익월 데이터를 분석합니다.`;if($("#basisNote"))$("#basisNote").textContent=note;if($("#platformCurrentHead"))$("#platformCurrentHead").textContent=state.scope==="month"?"선택월":"최근3M";if($("#trackCurrentHead"))$("#trackCurrentHead").textContent=state.scope==="month"?"선택월":"최근3M";const opt=$("#trackSort option[value=recent]");if(opt)opt.textContent=state.scope==="month"?"선택월 수익":"최근 3개월 수익"}
+  function applyPeriodUi(){
+    $$(`#periodControl button`).forEach(x=>x.classList.toggle("active",x.dataset.scope===state.scope));
+    $("#periodYear").classList.toggle("hidden",state.scope!=="year");$("#periodMonth").classList.toggle("hidden",state.scope!=="month");
+    const note=state.scope==="all"?"전체 수익월 데이터를 분석합니다. 엑셀 자료는 정산월 3개월 전, 직접 입력은 지정한 수익월 기준입니다.":state.scope==="year"?`${state.periodYear}년 수익월 데이터를 분석합니다.`:`${state.periodMonth} 수익월 데이터를 분석합니다.`;
+    if($("#basisNote"))$("#basisNote").textContent=note;
+    if($("#platformCurrentHead"))$("#platformCurrentHead").textContent=state.scope==="month"?"선택월":"최근3M";
+    if($("#trackCurrentHead"))$("#trackCurrentHead").textContent=state.scope==="month"?"선택월":"최근3M";
+    const opt=$("#trackSort option[value=recent]");if(opt)opt.textContent=state.scope==="month"?"선택월 수익":"최근 3개월 수익";
+  }
   async function reloadForPeriod(){state.recordPage=1;applyPeriodUi();if(state.page==="tracks"&&state.selectedTrack)await loadTrackDetail(state.selectedTrack);else await loadPage(state.page)}
   function setScope(scope){state.scope=["year","month"].includes(scope)?scope:"all";if(state.scope==="year"&&!state.periodYear&&state.meta?.bounds?.occurrence_max)state.periodYear=state.meta.bounds.occurrence_max.slice(0,4);if(state.scope==="month"&&!state.periodMonth&&state.meta?.bounds?.occurrence_max)state.periodMonth=state.meta.bounds.occurrence_max;reloadForPeriod()}
 
@@ -116,7 +128,19 @@
   async function loadQuality(){const d=await api("/analytics?view=quality");$("#qRows").textContent=num(d.summary.rows_count);$("#qMissingOriginal").textContent=num(d.summary.original_missing_rows);$("#qZeroPositive").textContent=num(d.summary.original_zero_positive_rows);$("#qUnmapped").textContent=num(d.unmappedSourceKeys);$("#qArtists").textContent=`${num(d.summary.artist_variants)}종`;const labels={actual:"실제 카운트",zero_adjusted:"0카운트 보정",estimated:"추정 카운트",missing:"미제공"};renderBars("#qualityBases",(d.bases||[]).map(x=>({...x,label:labels[x.count_basis]||x.count_basis})),"label","rows_count",num);renderRank("#artistVariants",d.artists||[],"artist","revenue",r=>`${num(r.rows_count)}건`);$("#importsBody").innerHTML=(d.imports||[]).map(r=>`<tr><td>${esc((r.started_at||"").replace("T"," "))}</td><td>${esc(r.file_name||"-")}</td><td class="num">${num(r.rows_received)}</td><td class="num">${num(r.rows_inserted)}</td><td class="num">${num(r.duplicate_rows)}</td><td class="num">${num(r.mapping_rows)}</td><td>${r.completed_at?'<span class="badge good">완료</span>':'<span class="badge warn">진행</span>'}</td></tr>`).join("")}
 
   function recordParams(page=state.recordPage,limit=50){const p=new URLSearchParams({page:String(page),limit:String(limit),scope:state.scope});if(state.scope==="year"&&state.periodYear)p.set("period",state.periodYear);if(state.scope==="month"&&state.periodMonth)p.set("period",state.periodMonth);const q=$("#recordSearch").value.trim(),d=$("#recordDistributor").value,pl=$("#recordPlatform").value,cb=$("#recordCountBasis").value;if(q)p.set("q",q);if(d)p.set("distributor",d);if(pl)p.set("platform",pl);if(cb)p.set("count_basis",cb);return p}
-  async function loadRecords(){const d=await api(`/records?${recordParams()}`);state.recordTotal=d.total;state.recordPages=Math.max(1,Math.ceil(d.total/d.limit));$("#pageInfo").textContent=`${d.page} / ${state.recordPages} · ${num(d.total)}건`;$("#prevPage").disabled=d.page<=1;$("#nextPage").disabled=d.page>=state.recordPages;$("#recordsBody").innerHTML=(d.rows||[]).map(r=>`<tr><td>${esc(r.occurrence_ym||"-")}</td><td>${esc(r.settlement_ym||"-")}</td><td>${esc(r.distributor)}</td><td><div class="song-title-cell">${esc(r.song_title)}</div><div class="table-sub">${esc(r.artist||"")} · ${esc(r.album_title||"")}</div></td><td><div>${esc(r.platform||"-")}</div><div class="table-sub">${esc(r.original_platform||"")} / ${esc(r.original_service||"")}</div></td><td class="num">${money(r.settlement_amount)}</td><td class="num">${r.original_count===null?'-':num(r.original_count)}</td><td class="num">${r.analysis_count===null?'-':num(r.analysis_count)}</td><td>${countBadge(r.count_basis)}${r.estimate_confidence?`<div class="table-sub">${esc(r.estimate_confidence)}</div>`:""}</td><td>${r.id?`<button class="icon-btn danger-mini" data-delete-id="${r.id}" title="삭제">×</button>`:'<span class="table-sub">R2</span>'}</td></tr>`).join("")}
+  async function loadRecords(){
+    const d=await api(`/records?${recordParams()}`);
+    state.recordTotal=d.total;state.recordPages=Math.max(1,Math.ceil(d.total/d.limit));
+    $("#pageInfo").textContent=`${d.page} / ${state.recordPages} · ${num(d.total)}건`;
+    $("#prevPage").disabled=d.page<=1;$("#nextPage").disabled=d.page>=state.recordPages;
+    digitalRecordRows.clear();
+    $("#recordsBody").innerHTML=(d.rows||[]).map(r=>{
+      const isDigital=!!r.manual_key;
+      if(isDigital)digitalRecordRows.set(String(r.manual_key),r);
+      const action=isDigital?`<button type="button" class="btn btn-ghost btn-sm" data-digital-edit="${esc(r.manual_key)}">수정</button>`:r.id?`<button type="button" class="icon-btn danger-mini" data-delete-id="${r.id}" title="삭제">×</button>`:'<span class="table-sub">R2</span>';
+      return `<tr><td>${esc(r.occurrence_ym||"-")}</td><td>${esc(r.settlement_ym||"-")}</td><td>${esc(r.distributor)}</td><td><div class="song-title-cell">${esc(r.song_title)}</div><div class="table-sub">${esc(r.artist||"")} · ${esc(r.album_title||"")}</div>${isDigital?'<span class="badge actual">직접 입력</span>':""}</td><td><div>${esc(r.platform||"-")}</div><div class="table-sub">${esc(r.original_platform||"")} / ${esc(r.original_service||"")}</div></td><td class="num">${money(r.settlement_amount)}</td><td class="num">${r.original_count===null?'-':num(r.original_count)}</td><td class="num">${r.analysis_count===null?'-':num(r.analysis_count)}</td><td>${countBadge(r.count_basis)}${r.estimate_confidence?`<div class="table-sub">${esc(r.estimate_confidence)}</div>`:""}</td><td>${action}</td></tr>`;
+    }).join("");
+  }
   async function deleteRecord(id){if(!confirm("이 정산 행을 삭제할까요?"))return;await api(`/records?id=${id}`,{method:"DELETE"});toast("삭제했습니다.");await loadRecords()}
   async function exportCsv(){toast("CSV를 준비 중입니다.");let all=[],page=1,total=1;while(all.length<total){const d=await api(`/records?${recordParams(page,500)}`);total=d.total;all.push(...d.rows);page++;if(page>50)break}const head=["수익년월","정산년월","유통사","아티스트","앨범명","곡명","통합플랫폼","원본플랫폼","원본서비스","정산금액","원본카운트","분석카운트","카운트구분","추정방법","비고"];const q=v=>`"${String(v??"").replace(/"/g,'""')}"`;const csv='\ufeff'+[head,...all.map(r=>[r.occurrence_ym,r.settlement_ym,r.distributor,r.artist,r.album_title,r.song_title,r.platform,r.original_platform,r.original_service,r.settlement_amount,r.original_count,r.analysis_count,r.count_basis,r.estimate_method,r.notes])].map(row=>row.map(q).join(",")).join("\r\n");const a=document.createElement("a");a.href=URL.createObjectURL(new Blob([csv],{type:"text/csv;charset=utf-8"}));a.download=`kenneth-settlement-${new Date().toISOString().slice(0,10)}.csv`;a.click();setTimeout(()=>URL.revokeObjectURL(a.href),1000)}
 
@@ -221,6 +245,114 @@
 
   async function saveManual(e){e.preventDefault();const fd=new FormData(e.currentTarget),obj=Object.fromEntries(fd.entries());if(obj.original_count==="")obj.original_count=null;else obj.original_count=Number(obj.original_count);obj.settlement_amount=Number(obj.settlement_amount||0);try{await api("/records",{method:"POST",body:JSON.stringify(obj)});e.currentTarget.reset();$("#manualDialog").close();toast("저장했습니다.");await Promise.all([loadMeta(),loadRecords()])}catch(err){toast(err.message,"error")}}
 
-  function bind(){ $("#loginForm").addEventListener("submit",login);$("#logoutButton").addEventListener("click",logout);$("#retryStatusButton").addEventListener("click",checkStatus);$$(`.nav-group[data-group]`).forEach(b=>b.addEventListener("click",()=>{const g=b.dataset.group,target=(g==="analysis"||g==="settlement")?(state.lastGroupPage[g]||groupDefault[g]):groupDefault[g];nav(target)}));$("#sectionTabs").addEventListener("click",e=>{const b=e.target.closest("[data-page]");if(b)nav(b.dataset.page)});$$(`#periodControl button`).forEach(b=>b.addEventListener("click",()=>setScope(b.dataset.scope)));$("#periodYear").addEventListener("change",e=>{state.periodYear=e.target.value;reloadForPeriod()});$("#periodMonth").addEventListener("change",e=>{state.periodMonth=e.target.value;reloadForPeriod()});$("#refreshButton").addEventListener("click",async()=>{clearGetCache();await loadMeta();await loadPage(state.page)});$("#trackSearch").addEventListener("input",debounce(renderTracks));$("#trackSort").addEventListener("change",renderTracks);$("#tracksBody").addEventListener("click",e=>{const b=e.target.closest("[data-track-open]");if(b)loadTrackDetail(b.dataset.trackOpen)});$("#trackBackButton").addEventListener("click",closeTrackDetail);$$("#trackRangeControl button").forEach(b=>b.addEventListener("click",()=>{state.trackRange=b.dataset.range;$$("#trackRangeControl button").forEach(x=>x.classList.toggle("active",x===b));renderTrackDetailCharts()}));const rr=debounce(()=>{state.recordPage=1;loadRecords()});for(const id of ["recordSearch","recordDistributor","recordPlatform","recordCountBasis"])$("#"+id).addEventListener(id==="recordSearch"?"input":"change",rr);$("#prevPage").addEventListener("click",()=>{if(state.recordPage>1){state.recordPage--;loadRecords()}});$("#nextPage").addEventListener("click",()=>{if(state.recordPage<state.recordPages){state.recordPage++;loadRecords()}});$("#recordsBody").addEventListener("click",e=>{const b=e.target.closest("[data-delete-id]");if(b)deleteRecord(Number(b.dataset.deleteId))});$("#exportCsvButton").addEventListener("click",exportCsv);$("#openManualButton").addEventListener("click",()=>$("#manualDialog").showModal());$("#manualForm").addEventListener("submit",saveManual);$("#fileInput").addEventListener("change",e=>handleFiles(e.target.files));const dz=$("#dropZone");for(const ev of ["dragenter","dragover"])dz.addEventListener(ev,e=>{e.preventDefault();dz.classList.add("drag")});for(const ev of ["dragleave","drop"])dz.addEventListener(ev,e=>{e.preventDefault();dz.classList.remove("drag")});dz.addEventListener("drop",e=>handleFiles(e.dataTransfer.files));$("#importButton").addEventListener("click",importRows)}
+  const digitalRecordRows=new Map();
+  let digitalManualBusy=false,digitalAccountGeneration=0;
+  function clearDigitalManualAccount(){
+    digitalAccountGeneration++;
+    const input=$("#digitalLoginId");if(input)input.value="";
+    const copy=$("#copyDigitalLoginIdButton");if(copy)copy.disabled=true;
+    const status=$("#digitalAccountStatus");if(status)status.textContent="";
+  }
+  async function openDigitalManual(row=null){
+    if(digitalManualBusy)return;
+    const form=$("#digitalManualForm");form.reset();
+    form.elements.settlement_ym.value=row?.settlement_ym||"";
+    form.elements.settlement_ym.readOnly=!!row;
+    form.elements.occurrence_ym.value=row?.occurrence_ym||"";
+    form.elements.settlement_amount.value=row?String(row.settlement_amount):"";
+    form.elements.original_count.value=row?.original_count===null||row?.original_count===undefined?"":String(row.original_count);
+    form.elements.notes.value=row?.notes||"";
+    form.dataset.editing=row?.manual_key||"";
+    $("#digitalManualTitle").textContent=row?"디지털 레코즈 정산 수정":"디지털 레코즈 정산 입력";
+    $("#digitalManualMessage").textContent="";clearDigitalManualAccount();
+    $("#digitalAccountStatus").textContent="아이디 불러오는 중…";
+    $("#digitalManualDialog").showModal();
+    const generation=digitalAccountGeneration;
+    try{
+      const d=await api("/manual");
+      if(generation!==digitalAccountGeneration||!$("#digitalManualDialog").open)return;
+      if(!d.account?.login_id)throw new Error("아이디를 불러오지 못했습니다.");
+      $("#digitalLoginId").value=String(d.account.login_id);
+      $("#copyDigitalLoginIdButton").disabled=digitalManualBusy;
+      $("#digitalAccountStatus").textContent="";
+    }catch(error){
+      if(generation===digitalAccountGeneration&&$("#digitalManualDialog").open)$("#digitalAccountStatus").textContent="아이디를 불러오지 못했습니다.";
+    }
+  }
+  async function copyDigitalLoginId(){
+    const input=$("#digitalLoginId");if(!input.value)return;
+    try{
+      if(!navigator.clipboard?.writeText)throw new Error("clipboard_unavailable");
+      await navigator.clipboard.writeText(input.value);toast("아이디를 복사했습니다.");
+    }catch{
+      input.focus();input.select();
+      const copied=typeof document.execCommand==="function"&&document.execCommand("copy");
+      toast(copied?"아이디를 복사했습니다.":"아이디를 선택했습니다. Ctrl+C로 복사해주세요.");
+    }
+  }
+  function updateDigitalOccurrence(){
+    const form=$("#digitalManualForm");
+    form.elements.occurrence_ym.value=shiftYmClient(form.elements.settlement_ym.value,-3)||"";
+  }
+  function digitalManualPayload(form){
+    const validYm=value=>/^\d{4}-(0[1-9]|1[0-2])$/.test(value);
+    const settlement_ym=form.elements.settlement_ym.value,occurrence_ym=form.elements.occurrence_ym.value;
+    if(!validYm(settlement_ym)||!validYm(occurrence_ym))throw new Error("정산월과 수익월을 확인해주세요.");
+    const amountText=form.elements.settlement_amount.value.trim();
+    const settlement_amount=Number(amountText);
+    if(!amountText||!Number.isFinite(settlement_amount)||settlement_amount<0)throw new Error("정산금액을 0 이상으로 입력해주세요.");
+    const countText=form.elements.original_count.value.trim();
+    const original_count=countText===""?null:Number(countText);
+    if(original_count!==null&&(!Number.isSafeInteger(original_count)||original_count<0))throw new Error("카운트는 0 이상의 정수로 입력해주세요.");
+    const payload={settlement_ym,occurrence_ym,settlement_amount,original_count,notes:form.elements.notes.value.trim()};
+    const aliases=["디지털레코즈","디지털레코드","digitalrecords"];
+    const distributor=(state.meta?.distributors||[]).find(value=>aliases.includes(String(value||"").toLowerCase().replace(/\s/g,"")));
+    if(distributor)payload.distributor=distributor;
+    return payload;
+  }
+  function setDigitalManualBusy(busy){
+    digitalManualBusy=busy;
+    $$("#digitalManualForm input, #digitalManualForm textarea, #digitalManualForm button").forEach(el=>el.disabled=busy);
+    $("#copyDigitalLoginIdButton").disabled=busy||!$("#digitalLoginId").value;
+    $("#digitalAccountLink").setAttribute("aria-disabled",String(busy));
+    $("#digitalManualSave").textContent=busy?"저장 중…":"저장";
+  }
+  async function digitalMonthAlreadyImported(settlementYm){
+    const provider=value=>String(value||"").toLowerCase().replace(/\s/g,"");
+    let page=1,received=0,total=1;
+    while(received<total){
+      const params=new URLSearchParams({scope:"all",q:"오우야",limit:"500",page:String(page)});
+      const d=await api(`/records?${params}`),rows=d.rows||[];total=Number(d.total)||0;
+      if(rows.some(r=>!r.manual_key&&r.song_title==="오우야"&&r.settlement_ym===settlementYm&&["디지털레코즈","디지털레코드","digitalrecords"].includes(provider(r.distributor))))return true;
+      received+=rows.length;
+      if(!rows.length&&received<total)throw new Error("기존 정산내역 확인을 완료하지 못했습니다. 다시 시도해주세요.");
+      page++;
+    }
+    return false;
+  }
+  async function saveDigitalManual(e){
+    e.preventDefault();if(digitalManualBusy)return;
+    const form=e.currentTarget,message=$("#digitalManualMessage");let obj;
+    try{obj=digitalManualPayload(form)}catch(error){message.textContent=error.message;return}
+    message.textContent="";setDigitalManualBusy(true);
+    try{
+      if(await digitalMonthAlreadyImported(obj.settlement_ym))throw new Error("이 정산월은 기존 정산내역에 이미 있습니다.");
+      let result;
+      try{result=await api("/manual",{method:"POST",body:JSON.stringify(obj)})}catch(error){
+        if(error.status!==409||error.details?.error!=="manual_entry_exists")throw error;
+        const previous=error.details.previous;
+        if(!previous)throw error;
+        const text=`${obj.settlement_ym} 디지털 레코즈 정산이 이미 있습니다.\n기존: ${money(previous.settlement_amount)} · 수익월 ${previous.occurrence_ym||"-"}\n변경: ${money(obj.settlement_amount)} · 수익월 ${obj.occurrence_ym}\n기존 내용을 수정할까요?`;
+        if(!confirm(text))return;
+        result=await api("/manual",{method:"POST",body:JSON.stringify({...obj,replace_existing:true,expected_fingerprint:previous.manual_fingerprint})});
+      }
+      $("#digitalManualDialog").close();form.reset();clearGetCache();
+      toast(result.duplicate?"같은 내용이 이미 저장되어 있습니다.":result.replaced?"정산내역을 수정했습니다.":"디지털 레코즈 정산을 저장했습니다.");
+      try{await loadMeta();await loadRecords()}catch(error){toast(`저장은 완료됐지만 화면 갱신에 실패했습니다: ${error.message}`,"error")}
+    }catch(error){const text=error.message==="manual_entry_changed_retry"?"이 정산내역이 변경됐습니다. 다시 저장해 최신 내용을 확인해주세요.":error.message;message.textContent=text;toast(text,"error")}
+    finally{setDigitalManualBusy(false)}
+  }
+
+  function bind(){ $("#loginForm").addEventListener("submit",login);$("#logoutButton").addEventListener("click",logout);$("#retryStatusButton").addEventListener("click",checkStatus);$$(`.nav-group[data-group]`).forEach(b=>b.addEventListener("click",()=>{const g=b.dataset.group,target=(g==="analysis"||g==="settlement")?(state.lastGroupPage[g]||groupDefault[g]):groupDefault[g];nav(target)}));$("#sectionTabs").addEventListener("click",e=>{const b=e.target.closest("[data-page]");if(b)nav(b.dataset.page)});$$(`#periodControl button`).forEach(b=>b.addEventListener("click",()=>setScope(b.dataset.scope)));$("#periodYear").addEventListener("change",e=>{state.periodYear=e.target.value;reloadForPeriod()});$("#periodMonth").addEventListener("change",e=>{state.periodMonth=e.target.value;reloadForPeriod()});$("#refreshButton").addEventListener("click",async()=>{clearGetCache();await loadMeta();await loadPage(state.page)});$("#trackSearch").addEventListener("input",debounce(renderTracks));$("#trackSort").addEventListener("change",renderTracks);$("#tracksBody").addEventListener("click",e=>{const b=e.target.closest("[data-track-open]");if(b)loadTrackDetail(b.dataset.trackOpen)});$("#trackBackButton").addEventListener("click",closeTrackDetail);$$("#trackRangeControl button").forEach(b=>b.addEventListener("click",()=>{state.trackRange=b.dataset.range;$$("#trackRangeControl button").forEach(x=>x.classList.toggle("active",x===b));renderTrackDetailCharts()}));const rr=debounce(()=>{state.recordPage=1;loadRecords()});for(const id of ["recordSearch","recordDistributor","recordPlatform","recordCountBasis"])$("#"+id).addEventListener(id==="recordSearch"?"input":"change",rr);$("#prevPage").addEventListener("click",()=>{if(state.recordPage>1){state.recordPage--;loadRecords()}});$("#nextPage").addEventListener("click",()=>{if(state.recordPage<state.recordPages){state.recordPage++;loadRecords()}});$("#recordsBody").addEventListener("click",e=>{const edit=e.target.closest("[data-digital-edit]");if(edit){const row=digitalRecordRows.get(edit.dataset.digitalEdit);if(row)openDigitalManual(row);return}const b=e.target.closest("[data-delete-id]");if(b)deleteRecord(Number(b.dataset.deleteId))});$("#exportCsvButton").addEventListener("click",exportCsv);$("#openManualButton").addEventListener("click",()=>$("#manualDialog").showModal());$("#manualForm").addEventListener("submit",saveManual);$$("[data-close-dialog]").forEach(b=>b.addEventListener("click",()=>{if(b.dataset.closeDialog==="digitalManualDialog"&&digitalManualBusy)return;$("#"+b.dataset.closeDialog).close()}));$("#openDigitalManualButton").addEventListener("click",()=>openDigitalManual());$("#digitalManualForm").addEventListener("submit",saveDigitalManual);$("#copyDigitalLoginIdButton").addEventListener("click",copyDigitalLoginId);$("#digitalAccountLink").addEventListener("click",e=>{if(digitalManualBusy)e.preventDefault()});$("#digitalManualForm").elements.settlement_ym.addEventListener("change",updateDigitalOccurrence);$("#digitalManualDialog").addEventListener("cancel",e=>{if(digitalManualBusy)e.preventDefault()});$("#fileInput").addEventListener("change",e=>handleFiles(e.target.files));const dz=$("#dropZone");for(const ev of ["dragenter","dragover"])dz.addEventListener(ev,e=>{e.preventDefault();dz.classList.add("drag")});for(const ev of ["dragleave","drop"])dz.addEventListener(ev,e=>{e.preventDefault();dz.classList.remove("drag")});dz.addEventListener("drop",e=>handleFiles(e.dataTransfer.files));$("#importButton").addEventListener("click",importRows)}
   document.addEventListener("DOMContentLoaded",()=>{bind();checkStatus()});
 })();

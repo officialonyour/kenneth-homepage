@@ -136,14 +136,13 @@ async function readR2Snapshot(env, suppliedMeta = undefined) {
   if (!b) return null;
   const meta = suppliedMeta === undefined ? await getMeta(env) : suppliedMeta;
   if (!meta) return null;
-  if (!meta.snapshotVersion || !Number.isInteger(meta.chunkCount) || meta.chunkCount < 0 ||
-      !Number.isInteger(meta.rowsCount) || meta.rowsCount < 0) throw new Error("invalid_r2_snapshot_meta");
+  readManifestFromMeta(meta);
   const rows = [];
   const totalChunks = Number(meta.chunkCount || 0);
   for (let start = 0; start < totalChunks; start += 8) {
     const reqs = [];
     for (let i = start; i < Math.min(totalChunks, start + 8); i++) {
-      reqs.push(b.get(`${PREFIX}/source/${meta.snapshotVersion}/${String(i).padStart(4, "0")}.json`));
+      reqs.push(b.get(snapshotChunkKey(meta, i)));
     }
     const objects = await Promise.all(reqs);
     for (const obj of objects) {
@@ -190,14 +189,143 @@ export async function writeSnapshotFromRows(env, rows, mappings = [], snapshotVe
     chunkCount,
     mappingCount: mappings.length,
     mappings,
+    manualIndex: buildManualIndex(rows),
+    digitalImportedMonths: [...new Set(rows.filter(row => !row.manual_key && isDigitalSingleRow(row)).map(row => row.settlement_ym).filter(month => /^[1-9]\d{3}-(0[1-9]|1[0-2])$/.test(month)))],
     builtAt: new Date().toISOString(),
   }, undefined, onlyIf);
   if (conditional && published === null) throw new Error("append_snapshot_changed_retry");
   await invalidateAnalyticsCache(env);
-  if (!options.preservePriorSnapshot && oldMeta?.snapshotVersion && oldMeta.snapshotVersion !== version) {
+  if (!options.preservePriorSnapshot && !oldMeta?.chunkVersions && oldMeta?.snapshotVersion && oldMeta.snapshotVersion !== version) {
     await deletePrefix(b, `${PREFIX}/source/${oldMeta.snapshotVersion}/`).catch(() => {});
   }
   return { snapshotVersion: version, rowsCount: rows.length, chunkCount };
+}
+
+function snapshotChunkKey(meta, no) {
+  return `${PREFIX}/source/${meta.chunkVersions?.[no] || meta.snapshotVersion}/${String(no).padStart(4, "0")}.json`;
+}
+
+function buildManualIndex(rows) {
+  const index = {};
+  rows.forEach((row, position) => {
+    if (!row.manual_key) return;
+    if (!/^[a-f0-9]{64}$/.test(row.manual_key) || !/^[a-f0-9]{64}$/.test(row.manual_fingerprint || "") ||
+        !Number.isSafeInteger(row.id) || row.id >= 0 || Object.hasOwn(index, row.manual_key)) throw new Error("invalid_manual_snapshot_row");
+    index[row.manual_key] = { id: row.id, fingerprint: row.manual_fingerprint, chunkNo: Math.floor(position / CHUNK_SIZE) };
+  });
+  return index;
+}
+
+function manualIndexFromMeta(meta) {
+  const index = meta.manualIndex ?? {};
+  if (!index || typeof index !== "object" || Array.isArray(index)) throw new Error("invalid_manual_snapshot_index");
+  for (const [key, entry] of Object.entries(index)) {
+    if (!/^[a-f0-9]{64}$/.test(key) || !entry || !/^[a-f0-9]{64}$/.test(entry.fingerprint || "") ||
+        !Number.isSafeInteger(entry.id) || entry.id >= 0 || !Number.isSafeInteger(entry.chunkNo) ||
+        entry.chunkNo < 0 || entry.chunkNo >= meta.chunkCount) throw new Error("invalid_manual_snapshot_index");
+  }
+  return index;
+}
+
+// A one-row manual save decrypts and rewrites one bounded chunk. Immutable
+// references retain every imported row without rebuilding the whole history.
+export async function saveManualSettlementRow(env, row, { replaceExisting = false, expectedFingerprint = null } = {}) {
+  const b = bucket(env);
+  if (!b) throw new Error("r2_binding_missing");
+  buildManualIndex([row]);
+  const state = await getMetaState(env), meta = state.meta;
+  readManifestFromMeta(meta);
+  if (!state.object?.etag) throw new Error("append_snapshot_etag_missing");
+  const index = manualIndexFromMeta(meta), entry = index[row.manual_key];
+  if (meta.digitalImportedMonths?.includes(row.settlement_ym)) throw new Error("manual_month_already_imported");
+  let no, part, replaced = false;
+  if (entry) {
+    no = entry.chunkNo;
+    const obj = await b.get(snapshotChunkKey(meta, no));
+    if (!obj) throw new Error("r2_snapshot_incomplete");
+    const decoded = await getPrivateJson(env, obj);
+    part = Array.isArray(decoded) ? decoded : decoded?.rows;
+    if (!Array.isArray(part) || part.length !== Math.min(CHUNK_SIZE, meta.rowsCount - no * CHUNK_SIZE) ||
+        part.some(value => !value || typeof value !== "object" || Array.isArray(value))) throw new Error("r2_snapshot_count_mismatch");
+    const matches = part.map((value, position) => ({ value, position })).filter(item => item.value?.manual_key === row.manual_key);
+    if (matches.length !== 1 || matches[0].value.id !== entry.id || matches[0].value.manual_fingerprint !== entry.fingerprint) throw new Error("invalid_manual_snapshot_index");
+    await getSettlementSnapshotManifest(env, meta.snapshotVersion);
+    const previous = matches[0].value;
+    if (entry.fingerprint === row.manual_fingerprint) return { ok: true, duplicate: true, replaced: false, id: previous.id, snapshotVersion: meta.snapshotVersion, rowsCount: meta.rowsCount };
+    if (!replaceExisting) {
+      const conflict = new Error("manual_entry_exists");
+      conflict.previous = previous;
+      throw conflict;
+    }
+    if (expectedFingerprint !== previous.manual_fingerprint) {
+      const conflict = new Error("manual_entry_changed_retry");
+      conflict.previous = previous;
+      throw conflict;
+    }
+    row = { ...row, id: previous.id };
+    part = part.slice(); part[matches[0].position] = row;
+    replaced = true;
+  } else {
+    if (replaceExisting) throw new Error("manual_entry_changed_retry");
+    no = Math.floor(meta.rowsCount / CHUNK_SIZE);
+    part = [];
+    if (meta.rowsCount % CHUNK_SIZE) {
+      const obj = await b.get(snapshotChunkKey(meta, no));
+      if (!obj) throw new Error("r2_snapshot_incomplete");
+      const decoded = await getPrivateJson(env, obj);
+      part = Array.isArray(decoded) ? decoded : decoded?.rows;
+      if (!Array.isArray(part) || part.length !== meta.rowsCount % CHUNK_SIZE ||
+          part.some(value => !value || typeof value !== "object" || Array.isArray(value))) throw new Error("r2_snapshot_count_mismatch");
+      part = part.slice();
+    }
+    if (Object.values(index).some(value => value.id === row.id)) throw new Error("manual_id_conflict");
+    part.push(row);
+  }
+  const version = `${Date.now()}-manual-${crypto.randomUUID()}`;
+  await putPrivateJson(env, b, `${PREFIX}/source/${version}/${String(no).padStart(4, "0")}.json`, part);
+  const chunkVersions = meta.chunkVersions ? meta.chunkVersions.slice() : Array(meta.chunkCount).fill(meta.snapshotVersion);
+  chunkVersions[no] = version;
+  const rowsCount = meta.rowsCount + (replaced ? 0 : 1);
+  const published = await putPrivateJson(env, b, META_KEY, {
+    ...meta, snapshotVersion: version, rowsCount, chunkCount: Math.ceil(rowsCount / CHUNK_SIZE), chunkVersions,
+    manualIndex: { ...index, [row.manual_key]: { id: row.id, fingerprint: row.manual_fingerprint, chunkNo: no } },
+    builtAt: new Date().toISOString(),
+  }, undefined, { etagMatches: state.object.etag });
+  if (published === null) throw new Error("append_snapshot_changed_retry");
+  return { ok: true, duplicate: false, replaced, id: row.id, snapshotVersion: version, rowsCount };
+}
+
+function isDigitalSingleRow(row) {
+  const provider = canonicalSettlementText(row?.distributor).toLowerCase().replace(/\s/g, "");
+  return ["디지털레코즈", "디지털레코드", "digitalrecords"].includes(provider) && canonicalSettlementText(row?.song_title) === "오우야";
+}
+
+async function readManualRows(env, meta) {
+  readManifestFromMeta(meta);
+  const entries = Object.entries(manualIndexFromMeta(meta)), rows = [];
+  const byChunk = new Map();
+  for (const [key, entry] of entries) {
+    if (!byChunk.has(entry.chunkNo)) byChunk.set(entry.chunkNo, []);
+    byChunk.get(entry.chunkNo).push([key, entry]);
+  }
+  for (const [no, group] of byChunk) {
+    const obj = await bucket(env).get(snapshotChunkKey(meta, no));
+    if (!obj) throw new Error("r2_snapshot_incomplete");
+    const decoded = await getPrivateJson(env, obj), part = Array.isArray(decoded) ? decoded : decoded?.rows;
+    if (!Array.isArray(part) || part.length !== Math.min(CHUNK_SIZE, meta.rowsCount - no * CHUNK_SIZE) ||
+        part.some(value => !value || typeof value !== "object" || Array.isArray(value))) throw new Error("r2_snapshot_count_mismatch");
+    for (const [key, entry] of group) {
+      const matches = part.filter(row => row?.manual_key === key);
+      if (matches.length !== 1 || matches[0].id !== entry.id || matches[0].manual_fingerprint !== entry.fingerprint) throw new Error("invalid_manual_snapshot_index");
+      rows.push(matches[0]);
+    }
+  }
+  return rows;
+}
+
+function assertNoManualImportOverlap(importedRows, manualRows) {
+  const manualMonths = new Set(manualRows.filter(isDigitalSingleRow).map(row => row.settlement_ym));
+  if (importedRows.some(row => !row.manual_key && isDigitalSingleRow(row) && manualMonths.has(row.settlement_ym))) throw new Error("manual_import_overlap");
 }
 
 export function canonicalSettlementText(value) {
@@ -369,6 +497,7 @@ export async function seedSnapshotChunk(env, { snapshotVersion, chunkNo, rows, f
     const oldMeta = await getMeta(env);
     if (mode === "append") {
       const current = await snapshotForAppend(env, oldMeta);
+      assertNoManualImportOverlap(incoming, current.rows.filter(row => row.manual_key));
       const combinedMappings = mergeMappings(current.mappings || [], Array.isArray(mappings) ? mappings : []);
       const merged = mergeImportRows(current.rows, incoming, combinedMappings);
       let publishedVersion = oldMeta?.snapshotVersion;
@@ -383,18 +512,23 @@ export async function seedSnapshotChunk(env, { snapshotVersion, chunkNo, rows, f
       return { ok: true, mode: "append", snapshotVersion: publishedVersion, chunkNo: no, rows: rows.length, finalChunk: true,
         appended: merged.appended, duplicates: merged.duplicates, rowsCount: merged.rowsCount };
     }
-    await putPrivateJson(env, b, META_KEY, {
-      snapshotVersion: version,
-      rowsCount: expectedRows,
-      chunkCount,
-      mappingCount: Array.isArray(mappings) ? mappings.length : 0,
-      mappings: Array.isArray(mappings) ? mappings : [],
-      builtAt: new Date().toISOString(),
-    });
-    await invalidateAnalyticsCache(env);
-    if (oldMeta?.snapshotVersion && oldMeta.snapshotVersion !== version) {
-      await deletePrefix(b, `${PREFIX}/source/${oldMeta.snapshotVersion}/`).catch(() => {});
+    const manualRows = oldMeta ? await readManualRows(env, oldMeta) : [];
+    assertNoManualImportOverlap(incoming, manualRows);
+    if (manualRows.length) {
+      const importedRows = incoming.filter(row => !row?.manual_key);
+      const mergedVersion = `${version}-manual-${crypto.randomUUID()}`;
+      const nextRows = [...importedRows, ...manualRows];
+      const written = await writeSnapshotFromRows(env, nextRows, Array.isArray(mappings) ? mappings : [], mergedVersion, {
+        expectedSnapshotVersion: oldMeta.snapshotVersion, preservePriorSnapshot: true,
+      });
+      return { ok: true, snapshotVersion: written.snapshotVersion, chunkNo: no, rows: rows.length, finalChunk: true,
+        rowsCount: written.rowsCount, manualPreserved: manualRows.length };
     }
+    // Conditional publication also protects a manual save finishing while an
+    // Excel replacement is staged. The user retries against that newer state.
+    await writeSnapshotFromRows(env, incoming, Array.isArray(mappings) ? mappings : [], version, {
+      expectedSnapshotVersion: oldMeta?.snapshotVersion || null, preservePriorSnapshot: true,
+    });
   }
   return { ok: true, snapshotVersion: version, chunkNo: no, rows: rows.length, finalChunk: !!finalChunk };
 }
@@ -439,7 +573,7 @@ export async function appendSnapshotRow(env, row) {
   const snap = await readR2Snapshot(env);
   if (!snap) return false;
   snap.rows.push(row);
-  await writeSnapshotFromRows(env, snap.rows, snap.mappings || []);
+  await writeSnapshotFromRows(env, snap.rows, snap.mappings || [], null, { expectedSnapshotVersion: snap.snapshotVersion, preservePriorSnapshot: true });
   return true;
 }
 
@@ -449,7 +583,7 @@ export async function removeSnapshotRowById(env, id) {
   const before = snap.rows.length;
   const rows = snap.rows.filter(r => Number(r.id) !== Number(id));
   if (rows.length === before) return false;
-  await writeSnapshotFromRows(env, rows, snap.mappings || []);
+  await writeSnapshotFromRows(env, rows, snap.mappings || [], null, { expectedSnapshotVersion: snap.snapshotVersion, preservePriorSnapshot: true });
   return true;
 }
 
@@ -463,6 +597,10 @@ function readManifestFromMeta(meta) {
       !Number.isSafeInteger(meta.rowsCount) || meta.rowsCount < 0 ||
       !Number.isSafeInteger(meta.chunkCount) || meta.chunkCount < 0 ||
       meta.chunkCount !== Math.ceil(meta.rowsCount / CHUNK_SIZE)) throw new Error("invalid_r2_snapshot_meta");
+  if (meta.chunkVersions !== undefined && (!Array.isArray(meta.chunkVersions) || meta.chunkVersions.length !== meta.chunkCount ||
+      meta.chunkVersions.some(version => typeof version !== "string" || !/^[a-zA-Z0-9_-]{1,180}$/.test(version)))) throw new Error("invalid_r2_snapshot_meta");
+  if (meta.digitalImportedMonths !== undefined && (!Array.isArray(meta.digitalImportedMonths) || meta.digitalImportedMonths.some(month => typeof month !== "string" || !/^[1-9]\d{3}-(0[1-9]|1[0-2])$/.test(month)))) throw new Error("invalid_r2_snapshot_meta");
+  manualIndexFromMeta(meta);
   const originalMappings = meta.mappings === undefined ? [] : meta.mappings;
   if (!Array.isArray(originalMappings) || originalMappings.some(mapping => !mapping || typeof mapping !== "object" || Array.isArray(mapping))) throw new Error("invalid_r2_snapshot_meta");
   const mappings = originalMappings.map(mapping => ({
@@ -492,9 +630,10 @@ export async function readSettlementSnapshotChunk(env, { snapshotVersion, chunkN
   if (!version) throw new Error("snapshot_version_required");
   const no = Number(chunkNo);
   if (chunkNo === null || chunkNo === undefined || String(chunkNo).trim() === "" || !Number.isSafeInteger(no) || no < 0) throw new Error("invalid_chunk_no");
-  const manifest = await getSettlementSnapshotManifest(env, version);
+  const meta = await getMeta(env), manifest = readManifestFromMeta(meta);
+  if (version !== manifest.snapshotVersion) throw new Error("snapshot_changed_retry");
   if (no >= manifest.chunkCount) throw new Error("invalid_chunk_no");
-  const b = bucket(env), object = await b.get(`${PREFIX}/source/${version}/${String(no).padStart(4, "0")}.json`);
+  const b = bucket(env), object = await b.get(snapshotChunkKey(meta, no));
   if (!object) throw new Error("r2_snapshot_incomplete");
   const parsed = await getPrivateJson(env, object), rows = Array.isArray(parsed) ? parsed : parsed?.rows;
   const expectedRows = Math.min(CHUNK_SIZE, manifest.rowsCount - no * CHUNK_SIZE);
@@ -510,9 +649,10 @@ export async function readSettlementSnapshotChunkBody(env, options) {
   const chunkNo = options.chunkNo ?? options.no, no = Number(chunkNo);
   if (!version) throw new Error("snapshot_version_required");
   if (chunkNo === null || chunkNo === undefined || String(chunkNo).trim() === "" || !Number.isSafeInteger(no) || no < 0) throw new Error("invalid_chunk_no");
-  const manifest = await getSettlementSnapshotManifest(env, version);
+  const meta = await getMeta(env), manifest = readManifestFromMeta(meta);
+  if (version !== manifest.snapshotVersion) throw new Error("snapshot_changed_retry");
   if (no >= manifest.chunkCount) throw new Error("invalid_chunk_no");
-  const object = await bucket(env).get(`${PREFIX}/source/${version}/${String(no).padStart(4, "0")}.json`);
+  const object = await bucket(env).get(snapshotChunkKey(meta, no));
   if (!object) throw new Error("r2_snapshot_incomplete");
   const box = JSON.parse(await object.text());
   if (!box || box.v !== 1 || !box.iv || !box.data) throw new Error("invalid_r2_ciphertext");

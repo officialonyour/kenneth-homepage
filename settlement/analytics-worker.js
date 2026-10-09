@@ -1,4 +1,4 @@
-import { computeAnalytics, computeMeta, computeRecords } from "./analytics-engine.js?v=1";
+import { computeAnalytics, computeMeta, computeRecords } from "./analytics-engine.js?v=2";
 
 let snapshot = null, staging = null;
 self.onmessage = ({ data }) => {

@@ -1,5 +1,5 @@
 import { json, requireDb } from "../../_shared/settlement.js";
-import { invalidateAnalyticsCache, appendSnapshotRow, removeSnapshotRowById } from "../../_shared/settlement-r2-cache.js";
+import { invalidateAnalyticsCache, appendSnapshotRow, removeSnapshotRowById, canonicalSettlementText } from "../../_shared/settlement-r2-cache.js";
 
 function txt(v,n=300){return String(v??"").trim().slice(0,n)}
 function num(v){const n=Number(v);return Number.isFinite(n)?n:null}
@@ -9,7 +9,10 @@ async function hashText(s){const d=new Uint8Array(await crypto.subtle.digest("SH
 export { onRequestGet } from "./cache/read.js";
 
 export async function onRequestPost({request,env}){
-  const db=requireDb(env);let x;try{x=await request.json()}catch{return json({ok:false,error:"invalid_json"},400)}
+  let x;try{x=await request.json()}catch{return json({ok:false,error:"invalid_json"},400)}
+  const provider=canonicalSettlementText(x?.distributor).toLowerCase().replace(/\s/g,"");
+  if(["digitalrecords","디지털레코즈","디지털레코드"].includes(provider)&&canonicalSettlementText(x?.song_title)==="오우야")return json({ok:false,error:"digital_manual_entry_required"},400);
+  const db=requireDb(env);
   const song=txt(x.song_title,240);if(!song)return json({ok:false,error:"song_title_required"},400);
   const settlement=txt(x.settlement_ym,7),settlementYm=/^\d{4}-\d{2}$/.test(settlement)?settlement:null,occurrence=settlementYm?monthShift(settlementYm,-3):null,originalCount=num(x.original_count),amount=num(x.settlement_amount)||0;
   let countBasis="missing",analysisCount=null,method="",conf="";
@@ -25,7 +28,9 @@ export async function onRequestPost({request,env}){
 }
 
 export async function onRequestDelete({request,env}){
-  const db=requireDb(env);const id=Number(new URL(request.url).searchParams.get("id"));if(!id)return json({ok:false,error:"id_required"},400);
+  const id=Number(new URL(request.url).searchParams.get("id"));
+  if(id<0)return json({ok:false,error:"digital_manual_entry_required"},400);
+  const db=requireDb(env);if(!id)return json({ok:false,error:"id_required"},400);
   await db.prepare("DELETE FROM music_settlement_records WHERE id=?").bind(id).run();
   await removeSnapshotRowById(env,id).catch(()=>{});
   await invalidateAnalyticsCache(env).catch(()=>{});

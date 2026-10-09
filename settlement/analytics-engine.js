@@ -454,7 +454,8 @@ export function computeRecords(snapshot, parameters = {}) {
     source_row_no:r.source_row_no??null,distributor:r.distributor??"",source_file:r.source_file??"",settlement_ym:r.settlement_ym??null,occurrence_ym:r.occurrence_ym??null,
     artist:r.artist??"",album_title:r.album_title??"",song_title:r.song_title??"",original_platform:r.original_platform??"",original_service:r.original_service??"",platform:r.platform??"",
     original_count:r.original_count??null,adjusted_count:r.adjusted_count??null,analysis_count:r.analysis_count??null,count_basis:r.count_basis??"missing",estimate_method:r.estimate_method??"",estimate_confidence:r.estimate_confidence??"",
-    settlement_amount:Number(r.settlement_amount||0),revenue_source:r.revenue_source??"",notes:r.notes??""
+    settlement_amount:Number(r.settlement_amount||0),revenue_source:r.revenue_source??"",notes:r.notes??"",
+    ...(r.manual_key?{manual_key:r.manual_key}:{})
   }));
   return {ok:true,scope,period:scope==="all"?null:period,rows:pageRows,total,page,limit,readOnly:pageRows.some(r=>r.id===null),_d1:{strategy:"r2_chunked_v1",queries:0,rowsRead:0}};
 }
