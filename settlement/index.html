@@ -10,7 +10,7 @@
   <script defer src="./xlsx-local.js?v=5"></script>
   <script defer src="./import-parser.js?v=1"></script>
   <script defer src="./read-client.js?v=2"></script>
-  <script defer src="./app.js?v=19"></script>
+  <script defer src="./app.js?v=period-clarity-v1-20261009"></script>
 </head>
 <body>
   <div id="toastHost" class="toast-host" aria-live="polite"></div>
@@ -110,8 +110,9 @@
 
       <section id="page-tracks" class="page">
         <div id="trackListView">
-          <div class="toolbar panel compact"><label class="grow">음원 검색<input id="trackSearch" type="search" placeholder="곡명 · 아티스트 · 앨범" /></label><label>정렬<select id="trackSort"><option value="recent">최근 3개월 수익</option><option value="rise">상승폭</option><option value="growth">성장률</option><option value="total">누적수익</option></select></label></div>
-          <article class="panel table-panel"><div class="panel-head"><div><p class="panel-kicker">TRACK INTELLIGENCE</p><h2>음원 성과 분석</h2><p class="muted compact-note">곡명을 클릭하면 플랫폼별 수익, 월간·연간 추세, 최근 상승/하락을 상세 분석합니다.</p></div><span id="trackPeriod" class="chip">최근 3개월 vs 직전 3개월</span></div><div class="table-wrap"><table class="data-table track-table"><thead><tr><th>#</th><th>곡명</th><th>아티스트 / 앨범</th><th class="num">누적수익</th><th id="trackCurrentHead" class="num">최근3M</th><th class="num">상승폭</th><th class="num">성장률</th><th class="num">실제 카운트</th><th class="num">플랫폼</th><th>최근월</th><th></th></tr></thead><tbody id="tracksBody"></tbody></table></div></article>
+          <div class="toolbar panel compact"><label class="grow">음원 검색<input id="trackSearch" type="search" placeholder="곡명 · 아티스트 · 앨범" /></label><label>목록 정렬<select id="trackSort" aria-describedby="trackScopeNote"><option value="total">전체기간 수익순</option><option value="recent">비교기간 수익순</option><option value="rise">비교 증감액순</option><option value="growth">비교 성장률순</option></select></label></div>
+          <p id="trackScopeNote" class="muted compact-note" role="status">조회 기간: 전체기간 · 정렬은 표시 순서만 바꿉니다. 증감액·성장률은 아래 추세 비교 기간 기준입니다.</p>
+          <article class="panel table-panel"><div class="panel-head"><div><p class="panel-kicker">TRACK INTELLIGENCE</p><h2>음원 성과 분석</h2><p class="muted compact-note">곡명을 클릭하면 플랫폼별 수익, 월간·연간 추세, 최근 상승/하락을 상세 분석합니다.</p></div><span id="trackPeriod" class="chip">추세 비교: 최근 3개월 vs 직전 3개월</span></div><div class="table-wrap"><table class="data-table track-table"><thead><tr><th>#</th><th>곡명</th><th>아티스트 / 앨범</th><th id="trackRevenueHead" class="num">전체기간 수익</th><th id="trackCurrentHead" class="num">비교기간 수익</th><th class="num">비교 증감액</th><th class="num">비교 성장률</th><th class="num">실제 카운트</th><th class="num">플랫폼</th><th>최근월</th><th></th></tr></thead><tbody id="tracksBody"></tbody></table></div></article>
         </div>
 
         <div id="trackDetailView" class="hidden track-detail-view">

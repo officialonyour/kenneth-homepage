@@ -83,6 +83,18 @@
   async function loadPage(page){try{if(page==="dashboard")await loadDashboard();else if(page==="months")await loadMonths();else if(page==="platforms")await loadPlatforms();else if(page==="tracks")await loadTracks();else if(page==="distributors")await loadDistributors();else if(page==="records")await loadRecords();else if(page==="quality")await loadQuality()}catch(e){toast(e.message,"error")}}
   function periodQuery(){const p=new URLSearchParams({scope:state.scope});if(state.scope==="year"&&state.periodYear)p.set("period",state.periodYear);if(state.scope==="month"&&state.periodMonth)p.set("period",state.periodMonth);return p.toString()}
   function comparisonLabel(d){const c=d?.currentWindow||[],p=d?.previousWindow||[];if(!c.length)return "기간 없음";if(d.comparisonMode==="month")return `${c[0]} vs ${p[0]||"-"}`;return `${c[0]}~${c.at(-1)} vs ${p[0]||"-"}~${p.at(-1)||"-"}`}
+  // KENNETH_TRACK_PERIOD_CLARITY_V1: scope totals and comparison metrics have separate labels.
+  function syncTrackPeriodUi(){
+    const period=state.scope==="year"?state.periodYear+"년":state.scope==="month"?state.periodMonth:"전체기간";
+    const total=$("#trackSort option[value=total]"),recent=$("#trackSort option[value=recent]"),sort=$("#trackSort");
+    if(total)total.textContent=period+" 수익순";
+    if(recent){recent.textContent="비교기간 수익순";recent.hidden=state.scope==="month";recent.disabled=state.scope==="month"}
+    if(sort&&state.scope==="month"&&sort.value==="recent")sort.value="total";
+    if($("#trackRevenueHead"))$("#trackRevenueHead").textContent=period+" 수익";
+    if($("#trackCurrentHead"))$("#trackCurrentHead").textContent=state.scope==="month"?"선택월 수익":"비교기간 수익";
+    if($("#trackScopeNote"))$("#trackScopeNote").textContent="조회 기간: "+period+" · 정렬은 표시 순서만 바꿉니다. 증감액·성장률은 아래 추세 비교 기간 기준입니다.";
+  }
+
   function applyPeriodUi(){
     $$(`#periodControl button`).forEach(x=>x.classList.toggle("active",x.dataset.scope===state.scope));
     $("#periodYear").classList.toggle("hidden",state.scope!=="year");$("#periodMonth").classList.toggle("hidden",state.scope!=="month");
@@ -90,7 +102,7 @@
     if($("#basisNote"))$("#basisNote").textContent=note;
     if($("#platformCurrentHead"))$("#platformCurrentHead").textContent=state.scope==="month"?"선택월":"최근3M";
     if($("#trackCurrentHead"))$("#trackCurrentHead").textContent=state.scope==="month"?"선택월":"최근3M";
-    const opt=$("#trackSort option[value=recent]");if(opt)opt.textContent=state.scope==="month"?"선택월 수익":"최근 3개월 수익";
+    syncTrackPeriodUi();
   }
   async function reloadForPeriod(){state.recordPage=1;applyPeriodUi();if(state.page==="tracks"&&state.selectedTrack)await loadTrackDetail(state.selectedTrack);else await loadPage(state.page)}
   function setScope(scope){state.scope=["year","month"].includes(scope)?scope:"all";if(state.scope==="year"&&!state.periodYear&&state.meta?.bounds?.occurrence_max)state.periodYear=state.meta.bounds.occurrence_max.slice(0,4);if(state.scope==="month"&&!state.periodMonth&&state.meta?.bounds?.occurrence_max)state.periodMonth=state.meta.bounds.occurrence_max;reloadForPeriod()}
@@ -120,7 +132,7 @@
 
   async function loadPlatforms(){const d=await api(`/analytics?view=platforms&${periodQuery()}`);const rows=d.rows||[];renderBars("#platformShareBars",rows.slice(0,12),"platform","revenue");const rpm=rows.filter(x=>Number(x.actual_count)>=20&&Number.isFinite(Number(x.rpm_actual))).sort((a,b)=>Number(b.rpm_actual)-Number(a.rpm_actual)).slice(0,12);renderBars("#platformRpmBars",rpm,"platform","rpm_actual",v=>`₩${mf.format(v)}`);$("#platformPeriod").textContent=comparisonLabel(d);$("#platformsBody").innerHTML=rows.map(r=>`<tr><td><b>${esc(r.platform)}</b></td><td class="num">${money(r.revenue)}</td><td class="num">${Number(r.share_pct||0).toFixed(1)}%</td><td class="num">${money(r.current_revenue)}</td><td class="num">${deltaHtml(r.delta)}</td><td class="num">${growthHtml(r.growth_pct,r.current_revenue,r.previous_revenue)}</td><td class="num">${num(r.actual_count)}</td><td class="num">${r.rpm_actual===null?"-":`₩${mf.format(r.rpm_actual)}`}</td><td class="num">${num(r.tracks_count)}</td><td>${esc(r.latest_month||"-")}</td></tr>`).join("")}
 
-  async function loadTracks(){if(state.selectedTrack){await loadTrackDetail(state.selectedTrack);return}const d=await api(`/analytics?view=tracks&${periodQuery()}`);state.tracks=d.rows||[];$("#trackPeriod").textContent=comparisonLabel(d);renderTracks()}
+  async function loadTracks(){if(state.selectedTrack){await loadTrackDetail(state.selectedTrack);return}const d=await api(`/analytics?view=tracks&${periodQuery()}`);state.tracks=d.rows||[];$("#trackPeriod").textContent="추세 비교: "+comparisonLabel(d);renderTracks()}
   function renderTracks(){const q=$("#trackSearch").value.trim().toLowerCase(),sort=$("#trackSort").value;let rows=state.tracks.filter(r=>!q||[r.song_title,r.artists,r.albums].some(v=>String(v||"").toLowerCase().includes(q)));const fn=sort==="rise"?(a,b)=>Number(b.delta)-Number(a.delta):sort==="growth"?(a,b)=>{const ga=Number.isFinite(Number(a.growth_pct))?Number(a.growth_pct):-1e9,gb=Number.isFinite(Number(b.growth_pct))?Number(b.growth_pct):-1e9;return gb-ga}:sort==="total"?(a,b)=>Number(b.revenue)-Number(a.revenue):(a,b)=>Number(b.current_revenue)-Number(a.current_revenue);rows.sort(fn);$("#tracksBody").innerHTML=rows.map((r,i)=>`<tr class="track-row" data-song="${esc(r.song_title)}"><td>${i+1}</td><td class="song-title-cell"><button class="track-link" type="button" data-track-open="${esc(r.song_title)}">${esc(r.song_title)}</button></td><td><div>${esc(r.artists||"-")}</div><div class="table-sub">${esc(r.albums||"")}</div></td><td class="num">${money(r.revenue)}</td><td class="num">${money(r.current_revenue)}</td><td class="num">${deltaHtml(r.delta)}</td><td class="num">${growthHtml(r.growth_pct,r.current_revenue,r.previous_revenue)}</td><td class="num">${num(r.actual_count)}</td><td class="num">${num(r.platforms_count)}</td><td>${esc(r.latest_month||"-")}</td><td><button class="detail-button" type="button" data-track-open="${esc(r.song_title)}">상세 →</button></td></tr>`).join("")}
 
   async function loadDistributors(){const d=await api(`/analytics?view=distributors&${periodQuery()}`);const rows=d.rows||[];$("#distributorCards").innerHTML=rows.map(r=>`<article class="distributor-card"><span class="share">수익 비중 ${Number(r.share_pct||0).toFixed(1)}%</span><h2>${esc(r.distributor)}</h2><strong>${money(r.revenue)}</strong><div class="mini"><span>수익 최신월<b>${esc(r.latest_occurrence||"-")}</b></span><span>정산 최신월<b>${esc(r.latest_settlement||"-")}</b></span><span>실제카운트 행<b>${Number(r.count_actual_row_pct||0).toFixed(1)}%</b></span></div></article>`).join("");$("#distributorsBody").innerHTML=rows.map(r=>`<tr><td><b>${esc(r.distributor)}</b></td><td class="num">${money(r.revenue)}</td><td class="num">${Number(r.share_pct||0).toFixed(1)}%</td><td class="num">${num(r.rows_count)}</td><td class="num">${num(r.tracks_count)}</td><td class="num">${num(r.platforms_count)}</td><td>${esc(r.latest_occurrence||"-")}</td><td>${esc(r.latest_settlement||"-")}</td><td class="num">${Number(r.count_actual_row_pct||0).toFixed(1)}%</td></tr>`).join("")}
