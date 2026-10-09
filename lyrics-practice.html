@@ -6,7 +6,7 @@
   <meta name="color-scheme" content="dark">
   <meta name="theme-color" content="#101114">
   <title>랜덤 가사 연습 | KENNETH</title>
-  <link rel="stylesheet" href="./lyric-trainer/styles.css?v=5-media-repeat">
+  <link rel="stylesheet" href="./lyric-trainer/styles.css?v=6-full-shuffle">
 </head>
 <body>
   <main class="app">
@@ -14,7 +14,7 @@
       <a class="brand" href="./"><span class="brand-mark">K</span><span>KENNETH<small>MUSIC WORKSPACE</small></span></a>
       <div class="top-actions"><a class="home-link" href="./">홈으로 ↗</a><button id="logoutBtn" class="text-button" hidden>로그아웃</button></div>
     </header>
-    <section class="intro"><p class="eyebrow">RANDOM LYRIC TRAINER</p><h1>어디서 시작해도,<br class="mobile-break"> 내 가사로 이어가기.</h1><p>그룹에서 곡과 마디를 랜덤으로. 3초 박자 소리 뒤, 곡 끝까지.</p></section>
+    <section class="intro"><p class="eyebrow">RANDOM LYRIC TRAINER</p><h1>어디서 시작해도,<br class="mobile-break"> 내 가사로 이어가기.</h1><p>랜덤 마디로 연습하거나, 그룹의 음원을 무작위 순서로 쭉 들어요.</p></section>
 
     <section id="servicePanel" class="access-panel panel" aria-live="polite"><span class="access-icon">♫</span><h2 id="serviceTitle">내 연습실을 불러오고 있어요.</h2><p id="serviceMessage">잠시만 기다려 주세요.</p><button id="reloadBtn" class="button secondary" hidden>다시 불러오기</button></section>
     <section id="loginPanel" class="access-panel panel" hidden>
@@ -44,8 +44,8 @@
         <div class="trainer-head"><div><span class="eyebrow">ON YOUR BEAT</span><h2 id="nowTitle">음원을 추가해 주세요</h2></div><span id="cloudState" class="cloud-pill">공유 연습실</span></div>
         <div class="stage" aria-live="polite" aria-atomic="true"><p id="stageStatus" class="stage-status">준비됐나요?</p><div id="count" class="big-count idle">READY</div><div id="beatDots" class="beat-dots" aria-hidden="true"><i></i><i></i><i></i><i></i></div><h3 id="stageMessage">그룹을 고르고, 한 번 눌러요.</h3><p id="stageDetail">그룹에서 곡을 고른 뒤, 랜덤 마디의 한 마디 전부터 시작합니다.</p></div>
         <div class="timeline"><label class="sr-only" for="seek">음원 재생 위치</label><input id="seek" type="range" min="0" max="1" value="0" step="0.01" disabled><div class="times"><output id="currentTime">0:00</output><span id="startInfo">3초 준비 → 1마디 먼저 → 곡 끝까지</span><span id="totalTime">0:00</span></div></div>
-        <div class="transport"><button id="randomBtn" class="button primary random-button" disabled><span>↝</span> 그룹 랜덤 연습</button><div class="small-transport"><button id="pauseBtn" class="button secondary" disabled>Ⅱ 일시정지</button><button id="stopBtn" class="button secondary" disabled>■ 멈추기</button></div></div>
-        <div class="practice-options"><label for="autoRandom"><input id="autoRandom" type="checkbox" aria-describedby="autoRandomNote"><span>곡 종료 후 자동 랜덤</span></label><p id="autoRandomNote" class="hint">곡이 끝나면 DONE에서 기다려요.</p><p class="hint tiny">이 화면에서 한 번 시작한 뒤, 차량·이어폰의 재생 버튼으로 이어 재생하거나 다음 랜덤 연습을 시작하세요.</p></div>
+        <div class="transport"><div class="play-modes"><button id="randomBtn" class="button primary random-button" disabled><span>↝</span> 그룹 랜덤 연습</button><button id="fullRandomBtn" class="button full-random-button" aria-pressed="false" disabled><span>♫</span> 전체곡 랜덤 재생</button></div><div class="small-transport"><button id="pauseBtn" class="button secondary" disabled>Ⅱ 일시정지</button><button id="stopBtn" class="button secondary" disabled>■ 멈추기</button></div></div>
+        <div class="practice-options"><p id="fullRandomNote" class="hint full-note">모든 곡을 한 번씩 듣고, 다시 섞어 계속 재생해요.</p><label for="autoRandom"><input id="autoRandom" type="checkbox" aria-describedby="autoRandomNote"><span>연습: 곡 종료 후 자동 랜덤</span></label><p id="autoRandomNote" class="hint">곡이 끝나면 DONE에서 기다려요.</p><p class="hint tiny">전체곡 재생은 항상 계속 이어져요. 차량·이어폰 버튼은 마지막으로 고른 재생 방식으로 작동해요.</p></div>
         <p id="playbackMessage" class="playback-note" role="status">시작한 음원은 곡 끝까지 계속 재생합니다.</p>
         <details id="beatSettings" class="beat-settings"><summary>박자 설정 <span id="gridBadge">96 BPM · 4박</span></summary><p id="gridNote" class="hint">96 BPM은 기본값이에요. 곡의 BPM과 초반 첫 마디의 첫 박을 확인해 주세요.</p><form id="gridForm"><div class="grid-fields"><label>BPM<input id="bpm" type="number" min="40" max="240" step="0.1" value="96" inputmode="decimal" required disabled></label><label>첫 마디 첫 박 <span>초</span><input id="offset" type="number" min="0" step="0.001" value="0" inputmode="decimal" required disabled></label></div><div class="grid-actions"><button id="previewBtn" type="button" class="button secondary" disabled>▶ 처음부터 듣기</button><button id="markBeatBtn" type="button" class="button secondary" disabled>지금 위치를 첫 박으로</button><button id="saveGridBtn" type="submit" class="button secondary" disabled>박자 저장</button></div></form><p class="hint tiny">한 마디는 4박 기준이에요. 자동 추정 값도 첫 박을 들어서 확인해 주세요.</p></details>
       </section>
@@ -54,6 +54,6 @@
   </main>
   <audio id="player" preload="metadata" playsinline muted></audio>
   <div id="toast" class="toast" role="status" aria-live="polite"></div>
-  <script type="module" src="./lyric-trainer/app.js?v=5-media-repeat"></script>
+  <script type="module" src="./lyric-trainer/app.js?v=6-full-shuffle"></script>
 </body>
 </html>

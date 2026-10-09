@@ -33,6 +33,25 @@ const MIN_BPM = 40;
 const MAX_BPM = 240;
 const MAX_TARGETS = 100000;
 
+/** Every song once per cycle; keep the boundary from repeating a song. */
+export function shuffleCycle(ids, { previous = null, random = Math.random } = {}) {
+  const queue = [...new Set(ids)];
+  const drawIndex = length => {
+    const draw = Number(random());
+    if (!Number.isFinite(draw)) throw new RangeError('Random source must return a finite number.');
+    return Math.floor(Math.min(1 - Number.EPSILON, Math.max(0, draw)) * length);
+  };
+  for (let index = queue.length - 1; index > 0; index -= 1) {
+    const other = drawIndex(index + 1);
+    [queue[index], queue[other]] = [queue[other], queue[index]];
+  }
+  if (queue.length > 1 && queue[0] === previous) {
+    const other = 1 + drawIndex(queue.length - 1);
+    [queue[0], queue[other]] = [queue[other], queue[0]];
+  }
+  return queue;
+}
+
 function positiveNumber(value, name) {
   const number = Number(value);
   if (!Number.isFinite(number) || number <= 0) throw new RangeError(`${name} must be positive.`);

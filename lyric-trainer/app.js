@@ -1,7 +1,7 @@
-import { buildTargets, barSeconds, pickTarget } from './engine.js';
+import { buildTargets, barSeconds, pickTarget, shuffleCycle } from './engine.js?v=6-full-shuffle';
 import { PreparationClicks } from './preparation-clicks.js';
 
-const ids = ['servicePanel','serviceTitle','serviceMessage','reloadBtn','loginPanel','loginForm','password','loginBtn','loginMessage','workspace','logoutBtn','trackCount','groupSelect','groupStatus','groupManager','groupForm','groupEditSelect','groupName','groupTrackList','saveGroupBtn','deleteGroupBtn','groupMessage','trackSelect','libraryStatus','trackMeta','fileInfo','deleteBtn','uploadLabel','fileInput','uploadLimit','uploadPanel','uploadName','uploadPercent','uploadProgress','uploadMessage','retryUploadBtn','retryTracksBtn','legacyDetails','legacyMessage','legacyBtn','nowTitle','cloudState','stageStatus','count','beatDots','stageMessage','stageDetail','seek','currentTime','startInfo','totalTime','randomBtn','pauseBtn','stopBtn','autoRandom','autoRandomNote','playbackMessage','beatSettings','gridBadge','gridNote','gridForm','bpm','offset','previewBtn','markBeatBtn','saveGridBtn','player','toast'];
+const ids = ['servicePanel','serviceTitle','serviceMessage','reloadBtn','loginPanel','loginForm','password','loginBtn','loginMessage','workspace','logoutBtn','trackCount','groupSelect','groupStatus','groupManager','groupForm','groupEditSelect','groupName','groupTrackList','saveGroupBtn','deleteGroupBtn','groupMessage','trackSelect','libraryStatus','trackMeta','fileInfo','deleteBtn','uploadLabel','fileInput','uploadLimit','uploadPanel','uploadName','uploadPercent','uploadProgress','uploadMessage','retryUploadBtn','retryTracksBtn','legacyDetails','legacyMessage','legacyBtn','nowTitle','cloudState','stageStatus','count','beatDots','stageMessage','stageDetail','seek','currentTime','startInfo','totalTime','randomBtn','fullRandomBtn','fullRandomNote','pauseBtn','stopBtn','autoRandom','autoRandomNote','playbackMessage','beatSettings','gridBadge','gridNote','gridForm','bpm','offset','previewBtn','markBeatBtn','saveGridBtn','player','toast'];
 const ui = Object.fromEntries(ids.map(id => [id, document.getElementById(id)]));
 const audio = ui.player;
 const API = '/api/lyric-trainer';
@@ -19,6 +19,7 @@ const lastSuccessfulSongs = new Map();
 const MAX_ANALYSIS_BYTES = 8 * 1048576;
 let tracks = [], selected = null, session = null, generation = 0, countdownTimer = 0, frame = 0, toastTimer = 0;
 let autoRandomEnabled = false, autoNextTimer = 0;
+let playbackMode = 'training', fullShuffle = null;
 const pendingMediaWaits = new Set();
 try { autoRandomEnabled = localStorage.getItem(AUTO_RANDOM_KEY) === '1'; } catch { /* Optional device preference. */ }
 let authGeneration = 0, maxUploadBytes = 80 * 1048576, uploadGeneration = 0, uploading = false, uploadQueue = [], uploadXHR = null;
@@ -88,9 +89,8 @@ function renderAutoRandom() {
 function changeAutoRandom() {
   autoRandomEnabled = ui.autoRandom.checked;
   try { localStorage.setItem(AUTO_RANDOM_KEY, autoRandomEnabled ? '1' : '0'); } catch { /* Optional device preference. */ }
-  if (!autoRandomEnabled && autoNextTimer) { clearTimeout(autoNextTimer); autoNextTimer = 0; mediaState('paused'); }
-  renderAutoRandom();
-  renderTransport();
+  if (!autoRandomEnabled && autoNextTimer && playbackMode !== 'full') { clearTimeout(autoNextTimer); autoNextTimer = 0; mediaState('paused'); }
+  renderAutoRandom(); renderTransport();
 }
 function setStage(status, count, message, detail, idle = false) {
   if (ui.stageStatus.textContent !== status) ui.stageStatus.textContent = status;
@@ -100,26 +100,28 @@ function setStage(status, count, message, detail, idle = false) {
   if (ui.stageDetail.textContent !== detail) ui.stageDetail.textContent = detail;
 }
 function resetStage() {
-  setStage('준비됐나요?', 'READY', availableGroupTracks().length ? '그룹에서 곡과 마디를 랜덤으로 골라요.' : '음원을 추가하거나 그룹에 곡을 넣어 주세요.', '딱, 딱, 딱 · 3초 준비 → 한 마디 먼저 → 곡 끝까지', true);
-  ui.startInfo.textContent = '3초 준비 → 1마디 먼저 → 곡 끝까지';
+  const full = playbackMode === 'full';
+  setStage('준비됐나요?', 'READY', availableGroupTracks().length ? full ? '그룹의 음원을 처음부터 끝까지 들어요.' : '그룹에서 곡과 마디를 랜덤으로 골라요.' : '음원을 추가하거나 그룹에 곡을 넣어 주세요.', full ? '모든 곡을 한 번씩 듣고, 다시 섞어 계속 이어져요.' : '딱, 딱, 딱 · 3초 준비 → 한 마디 먼저 → 곡 끝까지', true);
+  ui.startInfo.textContent = full ? '처음부터 → 곡 끝까지 → 다음 곡' : '3초 준비 → 1마디 먼저 → 곡 끝까지';
   Array.from(ui.beatDots.children).forEach(dot => dot.classList.remove('active'));
 }
 function stopPlayback({ resetPosition = true, render = true } = {}) {
-  generation += 1;
-  clearClock();
-  session = null;
+  generation += 1; clearClock(); session = null; fullShuffle = null;
   audio.muted = true; audio.pause(); audio.loop = false;
-  // A canceled silent unlock must not become the source of a later preview.
   if (selected && audio.src !== trackURL(selected)) { audio.src = trackURL(selected); audio.load(); }
   if (resetPosition) { try { audio.currentTime = 0; } catch { /* Metadata may be loading. */ } }
   mediaState(selected ? 'paused' : 'none');
   if (render) { resetStage(); renderTransport(); renderTime(); }
 }
 function renderTransport() {
-  const available = !!selected;
-  const ready = available && duration() > 0;
-  const canRandom = availableGroupTracks().some(eligibleTrack);
-  ui.randomBtn.disabled = !canRandom || groupsLoading || session?.phase === 'unlock' || session?.phase === 'starting';
+  const available = !!selected, ready = available && duration() > 0;
+  const choices = availableGroupTracks(), canRandom = choices.some(eligibleTrack);
+  const preparing = session?.phase === 'unlock' || session?.phase === 'starting';
+  ui.randomBtn.disabled = !canRandom || groupsLoading || groupSaving || preparing;
+  ui.fullRandomBtn.disabled = !choices.length || groupsLoading || groupSaving || preparing;
+  ui.fullRandomBtn.classList.toggle('active', playbackMode === 'full');
+  ui.fullRandomBtn.setAttribute?.('aria-pressed', String(playbackMode === 'full'));
+  ui.fullRandomNote.textContent = !choices.length ? '그룹에 음원을 추가해 주세요.' : choices.length === 1 ? '한 곡을 처음부터 끝까지 반복 재생해요.' : choices.length + '곡을 한 번씩 듣고, 순서를 다시 섞어 계속 재생해요.';
   ui.pauseBtn.disabled = !session && !autoNextTimer;
   ui.stopBtn.disabled = !session && !autoNextTimer;
   const paused = session && ['paused','blocked'].includes(session.phase);
@@ -359,11 +361,11 @@ function startAudio(current, token) {
   try { promise = audio.play(); } catch (error) { blocked(current, token, error, 'audio'); return; }
   Promise.resolve(promise).then(() => {
     if (!active(token, current)) return;
-    current.phase = current.type === 'preview' ? 'preview' : 'preroll';
+    current.phase = current.type === 'preview' ? 'preview' : current.type === 'full' ? 'playing' : 'preroll';
     if (current.type === 'training') lastSuccessfulSongs.set(current.groupKey, current.trackId);
-    ui.playbackMessage.textContent = '시작한 음원은 곡 끝까지 계속 재생합니다. 준비할 때는 화면을 켜 두세요.';
-    mediaState('playing');
-    renderTransport(); paintPlayback();
+    if (current.type === 'full' && fullShuffle) fullShuffle.lastTrackId = current.trackId;
+    ui.playbackMessage.textContent = current.type === 'full' ? '곡이 끝나면 다음 곡으로 자동 이동해요. 모든 곡을 들으면 다시 섞어 계속 재생합니다.' : '시작한 음원은 곡 끝까지 계속 재생합니다. 준비할 때는 화면을 켜 두세요.';
+    mediaState('playing'); renderTransport(); paintPlayback();
   }).catch(error => blocked(current, token, error, 'audio'));
 }
 function countdownTick(current, token) {
@@ -426,11 +428,39 @@ function startTraining({ scroll = true } = {}) {
   const alternatives = eligible.filter(track => track.id !== previous);
   const choices = alternatives.length ? alternatives : eligible;
   const track = choices[Math.min(choices.length - 1, Math.floor(Math.random() * choices.length))];
+  playbackMode = 'training';
   if (selected !== track) selectTrack(track.id);
   else stopPlayback({ resetPosition: false, render: false });
   const token = generation;
   session = { type: 'training', phase: 'unlock', plan: null, remaining: 3000, bpm: track.bpm || 96, trackId: track.id, groupKey };
   unlockForCountdown(session, token);
+  if (scroll && matchMedia('(max-width: 780px)').matches) ui.count.scrollIntoView?.({ behavior: 'smooth', block: 'center' });
+}
+function startFullShuffle({ scroll = true, continueCycle = false } = {}) {
+  if (ui.workspace.hidden || groupsLoading || groupSaving) return;
+  const choices = availableGroupTracks();
+  if (!choices.length) { toast('그룹에 재생할 음원을 넣어 주세요.'); return; }
+  const groupKey = selectedGroupId || 'all', membership = JSON.stringify(choices.map(track => track.id).sort());
+  let cycle = continueCycle && fullShuffle?.groupKey === groupKey && fullShuffle.membership === membership ? fullShuffle : { queue: [], cycle: 0, total: choices.length, lastTrackId: session?.type === 'full' ? selected?.id : null, groupKey, membership };
+  if (!cycle.queue.length) {
+    cycle.queue = shuffleCycle(choices.map(track => track.id), { previous: cycle.lastTrackId });
+    cycle.cycle += 1; cycle.total = choices.length;
+  }
+  const nextId = cycle.queue.shift();
+  const track = choices.find(item => item.id === nextId);
+  playbackMode = 'full';
+  if (selected !== track) selectTrack(track.id);
+  else stopPlayback({ render: false });
+  fullShuffle = cycle;
+  // Use the same media element and call play in the gesture/ended callback.
+  // No BPM, countdown, silent priming, or random seek is needed in this mode.
+  audio.currentTime = 0;
+  session = { type: 'full', phase: 'starting', trackId: track.id, groupKey, cycle: cycle.cycle, position: cycle.total - cycle.queue.length, total: cycle.total };
+  ui.startInfo.textContent = '처음부터 → 곡 끝까지 → 다음 곡';
+  setStage('전체곡 랜덤 재생', '♫', '처음부터 끝까지, 계속 이어져요.', cycle.cycle + '회차 · ' + session.position + '/' + cycle.total + '곡');
+  Array.from(ui.beatDots.children).forEach(dot => dot.classList.remove('active'));
+  if ('mediaSession' in navigator && typeof MediaMetadata !== 'undefined') navigator.mediaSession.metadata = new MediaMetadata({ title: track.name || track.fileName, artist: 'KENNETH · 전체곡 랜덤 재생' });
+  startAudio(session, generation);
   if (scroll && matchMedia('(max-width: 780px)').matches) ui.count.scrollIntoView?.({ behavior: 'smooth', block: 'center' });
 }
 function pausePlayback() {
@@ -462,11 +492,13 @@ function paintPlayback() {
   cancelAnimationFrame(frame); frame = 0;
   if (!session || !['preroll','playing','preview'].includes(session.phase)) return;
   renderTime();
-  if (session.type === 'preview') {
+  if (session.type === 'full') {
+    setStage('전체곡 랜덤 재생', '♫', '처음부터 끝까지, 계속 이어져요.', session.cycle + '회차 · ' + session.position + '/' + session.total + '곡 · 모두 들으면 다시 섞어요.');
+    Array.from(ui.beatDots.children).forEach(dot => dot.classList.remove('active'));
+  } else if (session.type === 'preview') {
     setStage('박자 확인 중', '♫', '첫 마디 첫 박을 찾아 주세요.', '원하는 위치에서 ‘지금 위치를 첫 박으로’를 누르세요.');
   } else {
-    const remaining = session.plan.target - audio.currentTime;
-    const beat = 60 / session.bpm;
+    const remaining = session.plan.target - audio.currentTime, beat = 60 / session.bpm;
     if (remaining > 0.002) {
       session.phase = 'preroll';
       const count = Math.min(4, Math.max(1, Math.ceil(remaining / beat)));
@@ -483,16 +515,19 @@ function paintPlayback() {
 function ended() {
   if (!audio.ended || !currentResource()) return;
   if (!session || !['preroll','playing','preview','starting'].includes(session.phase)) return;
-  const wasTraining = session.type === 'training', repeat = wasTraining && autoRandomEnabled;
+  const wasFull = session.type === 'full', wasTraining = session.type === 'training';
+  const repeat = wasFull || wasTraining && autoRandomEnabled;
   generation += 1; clearClock(); session = null; audio.muted = true;
   mediaState(repeat ? 'playing' : 'paused');
-  setStage('끝까지 왔어요', 'DONE', repeat ? '다음 랜덤 연습으로 이어가요.' : wasTraining ? '다른 시작점도 연습해 볼까요?' : '박자를 확인했다면 랜덤으로 시작해요.', repeat ? '새 곡·마디를 고른 뒤 3·2·1부터 시작합니다.' : '랜덤 버튼이나 차량·이어폰의 재생 버튼으로 다음 연습을 시작해요.', true);
+  setStage('끝까지 왔어요', wasFull ? '♫' : 'DONE', wasFull ? '다음 곡으로 이어가요.' : repeat ? '다음 랜덤 연습으로 이어가요.' : wasTraining ? '다른 시작점도 연습해 볼까요?' : '박자를 확인했다면 랜덤으로 시작해요.', wasFull ? '모든 곡을 들으면 순서를 다시 섞어 계속 재생해요.' : repeat ? '새 곡·마디를 고른 뒤 3·2·1부터 시작합니다.' : '랜덤 버튼이나 차량·이어폰의 재생 버튼으로 다음 연습을 시작해요.', true);
   Array.from(ui.beatDots.children).forEach(dot => dot.classList.remove('active'));
   if (repeat) {
     const token = generation, authToken = authGeneration;
     autoNextTimer = setTimeout(() => {
       autoNextTimer = 0;
-      if (token === generation && authToken === authGeneration && autoRandomEnabled && !session && !ui.workspace.hidden) startTraining({ scroll: false });
+      if (token !== generation || authToken !== authGeneration || session || ui.workspace.hidden) return;
+      if (wasFull && playbackMode === 'full') startFullShuffle({ scroll: false, continueCycle: true });
+      else if (!wasFull && autoRandomEnabled) startTraining({ scroll: false });
     }, 0);
   }
   renderTransport(); renderTime();
@@ -501,6 +536,11 @@ function seekTo(value) {
   if (!selected || duration() <= 0) return;
   if (session && ['unlock','countdown','starting'].includes(session.phase)) return;
   const playing = session && !audio.paused && ['preroll','playing','preview'].includes(session.phase);
+  if (session?.type === 'full') {
+    audio.currentTime = Math.max(0, Math.min(duration(), Number(value) || 0));
+    renderTime(); if (playing) paintPlayback();
+    return;
+  }
   stopPlayback({ resetPosition: false, render: false });
   audio.currentTime = Math.max(0, Math.min(duration(), Number(value) || 0));
   if (playing) { session = { type: 'preview', phase: 'starting' }; startAudio(session, generation); }
@@ -690,9 +730,15 @@ function bindMediaSession() {
 }
 function mediaPlay() {
   if (session && ['paused','blocked'].includes(session.phase)) resumePlayback();
-  else if (!session) startTraining({ scroll: false });
+  else if (!session) {
+    if (playbackMode === 'full') startFullShuffle({ scroll: false, continueCycle: true });
+    else startTraining({ scroll: false });
+  }
 }
-function mediaNext() { startTraining({ scroll: false }); }
+function mediaNext() {
+  if (playbackMode === 'full') startFullShuffle({ scroll: false, continueCycle: true });
+  else startTraining({ scroll: false });
+}
 ui.loginForm.addEventListener('submit', login);
 ui.logoutBtn.addEventListener('click', logout);
 ui.reloadBtn.addEventListener('click', initialize);
@@ -703,6 +749,7 @@ ui.groupForm.addEventListener('submit', saveGroup);
 ui.deleteGroupBtn.addEventListener('click', deleteGroup);
 ui.trackSelect.addEventListener('change', () => { try { selectTrack(ui.trackSelect.value); } catch (error) { report(error); } });
 ui.randomBtn.addEventListener('click', startTraining);
+ui.fullRandomBtn.addEventListener('click', () => startFullShuffle());
 ui.pauseBtn.addEventListener('click', togglePause);
 ui.stopBtn.addEventListener('click', () => stopPlayback());
 ui.autoRandom.addEventListener('change', changeAutoRandom);
@@ -736,7 +783,7 @@ audio.addEventListener('play', () => {
 });
 audio.addEventListener('playing', () => {
   if (!session || !['unlock','starting','preroll','playing','preview'].includes(session.phase)) { audio.muted = true; audio.pause(); return; }
-  if (session.phase !== 'unlock') ui.playbackMessage.textContent = '시작한 음원은 곡 끝까지 계속 재생합니다. 준비할 때는 화면을 켜 두세요.';
+  if (session.phase !== 'unlock') ui.playbackMessage.textContent = session.type === 'full' ? '곡이 끝나면 다음 곡으로 자동 이동해요. 모든 곡을 들으면 다시 섞어 계속 재생합니다.' : '시작한 음원은 곡 끝까지 계속 재생합니다. 준비할 때는 화면을 켜 두세요.';
 });
 document.addEventListener('visibilitychange', () => { if (!document.hidden && session && ['preroll','playing','preview'].includes(session.phase)) paintPlayback(); });
 bindMediaSession();
