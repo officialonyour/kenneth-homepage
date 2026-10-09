@@ -103,9 +103,13 @@
   async function read(input){
     const buf=input instanceof ArrayBuffer?input:input.buffer.slice(input.byteOffset,input.byteOffset+input.byteLength), idx=zipIndex(buf);
     const wbXml=await textEntry(buf,idx,'xl/workbook.xml'), relsXml=await textEntry(buf,idx,'xl/_rels/workbook.xml.rels');
-    const specs=workbookSheets(wbXml,relsXml), wanted=new Set(['정산내역기록','플랫폼매핑']), sheets={};
+    const specs=workbookSheets(wbXml,relsXml), wanted=new Set(['정산내역기록','플랫폼매핑','정산서']), sheets={};
     let ss=[]; if(idx.has('xl/sharedStrings.xml'))ss=sharedStrings(await textEntry(buf,idx,'xl/sharedStrings.xml'));
-    for(const spec of specs){if(!wanted.has(spec.name))continue;sheets[spec.name]=sheetMatrix(await textEntry(buf,idx,spec.path),ss)}
+    for(const spec of specs){
+      const normalizedName=spec.name.trim().normalize('NFC');
+      if(!wanted.has(normalizedName))continue;
+      sheets[normalizedName]=sheetMatrix(await textEntry(buf,idx,spec.path),ss);
+    }
     return {SheetNames:specs.map(x=>x.name),Sheets:sheets};
   }
   global.XLSX={

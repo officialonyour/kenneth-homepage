@@ -1,5 +1,5 @@
 import { json, requireDb } from "../../_shared/settlement.js";
-import { invalidateAnalyticsCache } from "../../_shared/settlement-r2-cache.js";
+import { invalidateAnalyticsCache, countSettlementBusinessMatches, buildSettlementImportPlatformResolver } from "../../_shared/settlement-r2-cache.js";
 
 function text(v, max = 300) { return String(v ?? "").trim().slice(0, max); }
 function integer(v) { const n = Number(v); return Number.isFinite(n) ? Math.round(n) : null; }
@@ -67,6 +67,37 @@ export async function onRequestPost({ request, env }) {
   if (mappings.length > 500) return json({ ok:false, error:"mapping_chunk_too_large" }, 413);
   const batchId = text(body.batchId || crypto.randomUUID(), 100);
   const fileName = text(body.fileName, 240);
+  const rawRows = rows.filter(r => r?.import_format === "minerva");
+  if (rawRows.some(r => !Number.isInteger(r.import_occurrence) || r.import_occurrence < 1)) {
+    return json({ ok:false, error:"invalid_minerva_row_occurrence" }, 400);
+  }
+  // Compare raw statements with prior imports by their original business fields.
+  // The ordinal spans the entire selected file, so equal-valued legitimate rows
+  // remain distinct even when this request is one of several upload chunks.
+  const priorRawRows = [];
+  const rawPeriods = new Map(rawRows.map(r => [JSON.stringify([text(r.distributor,120),ym(r.settlement_ym)]), r]));
+  for (const row of rawPeriods.values()) {
+    const result = await db.prepare(`SELECT distributor,settlement_ym,artist,album_title,song_title,
+      original_platform,original_service,original_count,settlement_amount,platform
+      FROM music_settlement_records
+      WHERE distributor=? AND settlement_ym=? AND COALESCE(import_batch_id,'')<>?`)
+      .bind(text(row.distributor,120),ym(row.settlement_ym),batchId).all();
+    if (result?.success === false || !Array.isArray(result?.results)) {
+      return json({ ok:false, error:"minerva_existing_rows_read_failed" }, 503);
+    }
+    priorRawRows.push(...result.results);
+  }
+
+  let resolveRawPlatform = row => row.platform;
+  if (rawRows.length) {
+    const mappingResult = await db.prepare(`SELECT source_key,platform,original_platform,original_service FROM settlement_platform_mapping`).all();
+    const providerResult = await db.prepare(`SELECT DISTINCT original_platform,original_service,platform FROM music_settlement_records`).all();
+    if (mappingResult?.success === false || providerResult?.success === false ||
+        !Array.isArray(mappingResult?.results) || !Array.isArray(providerResult?.results)) {
+      return json({ ok:false, error:"minerva_platform_mapping_read_failed" }, 503);
+    }
+    resolveRawPlatform = buildSettlementImportPlatformResolver(providerResult.results,mappingResult.results);
+  }
 
   await db.prepare(`INSERT OR IGNORE INTO settlement_import_batches (batch_id,file_name) VALUES (?,?)`).bind(batchId, fileName).run();
   let inserted = 0, duplicates = 0, invalid = 0, mappingUpserts = 0;
@@ -85,6 +116,11 @@ export async function onRequestPost({ request, env }) {
     for (const input of chunk) {
       const r = await normalize(input, batchId);
       if (!r.song_title || !r.settlement_ym) { invalid++; continue; }
+      if (input.import_format === "minerva" && countSettlementBusinessMatches(priorRawRows, r) >= input.import_occurrence) {
+        duplicates++; continue;
+      }
+      r.import_format = input.import_format;
+      if (input.import_format === "minerva") r.platform = text(resolveRawPlatform(r),160);
       normalized.push(r);
     }
     if (!normalized.length) continue;
@@ -92,7 +128,9 @@ export async function onRequestPost({ request, env }) {
     // Keep imports idempotent even after the occurrence-month correction.  The
     // identity below intentionally excludes occurrence_ym because it is derived
     // from settlement_ym by the fixed -3 month rule.
-    const checkStmts = normalized.map(r => db.prepare(`SELECT id FROM music_settlement_records
+    const checkStmts = normalized.map(r => r.import_format === "minerva"
+      ? db.prepare(`SELECT id FROM music_settlement_records WHERE row_hash=? LIMIT 1`).bind(r.row_hash)
+      : db.prepare(`SELECT id FROM music_settlement_records
       WHERE COALESCE(source_row_no,-1)=COALESCE(?,-1)
         AND distributor=?
         AND COALESCE(settlement_ym,'')=COALESCE(?,'')

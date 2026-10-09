@@ -16,6 +16,7 @@ export async function onRequestPost({ request, env }) {
       finalChunk: body.finalChunk,
       totalRows: body.totalRows,
       mappings: body.mappings,
+      mode: body.mode,
     });
     return json(result);
   } catch (error) {
