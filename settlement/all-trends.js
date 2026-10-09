@@ -219,6 +219,7 @@
     const introText = node('div');
     introText.append(node('strong', '', `${label} · 전체 음원 합산`),
       node('p', '', '등록된 모든 음원의 수익을 합산합니다. TOP 5 비교는 아래에서 별도로 확인할 수 있습니다.'));
+    if (scope === 'month') introText.append(node('p', '', '한 달을 선택했으므로 차트에는 해당 월의 수익만 표시됩니다. 월별 흐름은 상단의 전체기간 또는 연간을 선택해 확인하세요.'));
     intro.append(introText);
     if (validMonth(data.latestYm)) intro.append(node('span', 'at-chip', `최신 등록월 ${data.latestYm}`));
     content.append(intro);

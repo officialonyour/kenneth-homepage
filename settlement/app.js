@@ -129,6 +129,7 @@
   function showLogin(){
     if(window.SettlementAllTrends)SettlementAllTrends.cancel();
     clearGetCache();clearDigitalManualAccount();digitalRecordRows.clear();
+    resetPagePeriods();
     const form=$("#digitalManualForm");if(form){form.reset();form.dataset.editing=""}
     const dialog=$("#digitalManualDialog");if(dialog?.open)dialog.close();
     $("#appView").classList.add("hidden");$("#setupView").classList.add("hidden");$("#loginView").classList.remove("hidden");
@@ -154,7 +155,52 @@
 
   async function loadMeta(){state.meta=await api("/meta");const fill=(sel,vals)=>{const el=$(sel),cur=el.value;el.innerHTML='<option value="">전체</option>'+vals.map(v=>`<option>${esc(v)}</option>`).join("");if(vals.includes(cur))el.value=cur};fill("#recordDistributor",state.meta.distributors||[]);fill("#recordPlatform",state.meta.platforms||[]);const b=state.meta.bounds||{},min=b.occurrence_min,max=b.occurrence_max;if(max){if(!state.periodYear)state.periodYear=String(max).slice(0,4);if(!state.periodMonth)state.periodMonth=String(max);const minY=Number(String(min||max).slice(0,4)),maxY=Number(String(max).slice(0,4)),years=[];for(let y=maxY;y>=minY;y--)years.push(String(y));$("#periodYear").innerHTML=years.map(y=>`<option value="${y}">${y}년</option>`).join("");$("#periodYear").value=state.periodYear;const months=[];let ym=String(max),guard=0;while(ym&&guard<240){months.push(ym);if(ym===min)break;ym=shiftYmClient(ym,-1);guard++}$("#periodMonth").innerHTML=months.map(m=>`<option value="${m}">${m}</option>`).join("");$("#periodMonth").value=state.periodMonth}applyPeriodUi()}
   function renderSectionTabs(page){const group=pageGroup[page]||"dashboard",pages=groupPages[group]||[],host=$("#sectionTabs");if(!host)return;if(pages.length<=1){host.innerHTML="";host.classList.add("hidden");return}host.classList.remove("hidden");host.innerHTML=pages.map(p=>`<button class="section-tab${p===page?" active":""}" data-page="${p}">${esc(tabLabels[p]||titles[p]?.[1]||p)}</button>`).join("")}
-  function nav(page){if(page!=="trends"&&window.SettlementAllTrends)SettlementAllTrends.cancel();if(page!=="tracks"&&state.selectedTrack){closeTrackDetail()}state.page=page;const group=pageGroup[page]||"dashboard";if(group==="analysis"||group==="settlement")state.lastGroupPage[group]=page;$$(`.nav-group[data-group]`).forEach(x=>x.classList.toggle("active",x.dataset.group===group));renderSectionTabs(page);$$(`.page`).forEach(x=>x.classList.toggle("active",x.id===`page-${page}`));const t=titles[page]||titles.dashboard;$("#pageEyebrow").textContent=t[0];$("#pageTitle").textContent=t[1];$("#periodTools").classList.toggle("hidden",["quality","import"].includes(page));loadPage(page)}
+  // KENNETH_TREND_PERIOD_V1: trends remember a separate selection from other pages.
+  let trendsPeriodSelection=null,otherPeriodSelection=null,trackPeriodInherited=false;
+  function capturePagePeriod(){
+    return {scope:state.scope,periodYear:state.periodYear,periodMonth:state.periodMonth};
+  }
+  function restorePagePeriod(selection){
+    const latest=String(state.meta?.bounds?.occurrence_max||"");
+    state.scope=["year","month"].includes(selection?.scope)?selection.scope:"all";
+    state.periodYear=selection?.periodYear||latest.slice(0,4);
+    state.periodMonth=selection?.periodMonth||latest;
+    $("#periodYear").value=state.periodYear;$("#periodMonth").value=state.periodMonth;
+    applyPeriodUi();
+  }
+  function switchPagePeriod(page,{inheritPeriod=false}={}){
+    const current=capturePagePeriod();
+    if(page==="trends"&&state.page!=="trends"){
+      if(!trackPeriodInherited)otherPeriodSelection=current;
+      trackPeriodInherited=false;
+      restorePagePeriod(trendsPeriodSelection||{...current,scope:"all"});
+    }else if(state.page==="trends"&&page!=="trends"){
+      trendsPeriodSelection=current;
+      trackPeriodInherited=page==="tracks"&&inheritPeriod;
+      if(!trackPeriodInherited)restorePagePeriod(otherPeriodSelection);
+    }else if(trackPeriodInherited&&page!=="tracks"){
+      trackPeriodInherited=false;
+      restorePagePeriod(otherPeriodSelection);
+    }
+  }
+  function resetPagePeriods(){
+    trendsPeriodSelection=null;otherPeriodSelection=null;trackPeriodInherited=false;
+    state.page="dashboard";state.scope="all";state.periodYear="";state.periodMonth="";
+  }
+  function nav(page,opt={}){
+    switchPagePeriod(page,opt);
+    if(page!=="trends"&&window.SettlementAllTrends)SettlementAllTrends.cancel();
+    if(page!=="tracks"&&state.selectedTrack)closeTrackDetail();
+    state.page=page;
+    const group=pageGroup[page]||"dashboard";
+    if(group==="analysis"||group==="settlement")state.lastGroupPage[group]=page;
+    $$(`.nav-group[data-group]`).forEach(x=>x.classList.toggle("active",x.dataset.group===group));
+    renderSectionTabs(page);$$(`.page`).forEach(x=>x.classList.toggle("active",x.id===`page-${page}`));
+    const t=titles[page]||titles.dashboard;
+    $("#pageEyebrow").textContent=t[0];$("#pageTitle").textContent=t[1];
+    $("#periodTools").classList.toggle("hidden",["quality","import"].includes(page));
+    loadPage(page);
+  }
   async function loadPage(page){try{if(page==="dashboard")await loadDashboard();else if(page==="months")await loadMonths();else if(page==="platforms")await loadPlatforms();else if(page==="tracks")await loadTracks();else if(page==="trends")await loadAllTrends();else if(page==="distributors")await loadDistributors();else if(page==="records")await loadRecords();else if(page==="quality")await loadQuality()}catch(e){toast(e.message,"error")}}
   function periodQuery(){const p=new URLSearchParams({scope:state.scope});if(state.scope==="year"&&state.periodYear)p.set("period",state.periodYear);if(state.scope==="month"&&state.periodMonth)p.set("period",state.periodMonth);return p.toString()}
   function comparisonLabel(d){const c=d?.currentWindow||[],p=d?.previousWindow||[];if(!c.length)return "기간 없음";if(d.comparisonMode==="month")return `${c[0]} vs ${p[0]||"-"}`;return `${c[0]}~${c.at(-1)} vs ${p[0]||"-"}~${p.at(-1)||"-"}`}
@@ -199,7 +245,16 @@
   function filterTrackMonths(rows){if(state.trackRange==="all")return rows||[];const n=Number(state.trackRange||24);return (rows||[]).slice(-n)}
   function renderPlatformTrend(host,monthly,platformRows){const el=$(host);const rows=filterTrackMonths(monthly||[]);const top=(platformRows||[]).slice(0,5).map(x=>x.platform);if(!rows.length||!top.length){el.innerHTML='<div class="empty-state">데이터가 없습니다.</div>';return}const months=rows.map(x=>x.ym),byKey=new Map((state.trackDetail?.platformMonthly||[]).map(x=>[`${x.ym}|${x.platform}`,Number(x.revenue)||0]));const vals=top.flatMap(p=>months.map(ym=>byKey.get(`${ym}|${p}`)||0)),max=Math.max(...vals,1);const W=940,H=290,M={l:34,r:18,t:24,b:40};const x=i=>M.l+(W-M.l-M.r)*(months.length===1?.5:i/(months.length-1));const y=v=>M.t+(H-M.t-M.b)*(1-Number(v)/(max||1));let grid="",labels="",series="";for(let i=0;i<5;i++){const yy=M.t+(H-M.t-M.b)*i/4;const val=max*(1-i/4);grid+=`<line class="chart-grid-line" x1="${M.l}" y1="${yy}" x2="${W-M.r}" y2="${yy}"/><text class="chart-label" x="${M.l}" y="${yy-4}">${val>=10000?(val/10000).toFixed(1)+"만":mf.format(val)}</text>`}const step=Math.max(1,Math.ceil(months.length/7));months.forEach((ym,i)=>{if(i%step===0||i===months.length-1)labels+=`<text class="chart-label" text-anchor="middle" x="${x(i)}" y="${H-12}">${ymShort(ym)}</text>`});top.forEach((p,si)=>{const pts=months.map((ym,i)=>[x(i),y(byKey.get(`${ym}|${p}`)||0),ym,byKey.get(`${ym}|${p}`)||0]);const path=pts.map((pt,i)=>`${i?"L":"M"}${pt[0].toFixed(1)},${pt[1].toFixed(1)}`).join(" ");series+=`<path class="platform-series ps-${si}" d="${path}"/>`+pts.map(pt=>`<circle class="platform-point ps-${si}" cx="${pt[0]}" cy="${pt[1]}" r="2.8"><title>${esc(p)} · ${pt[2]} · ${money(pt[3])}</title></circle>`).join("")});const legend=top.map((p,i)=>`<span><i class="legend-dot ps-bg-${i}"></i>${esc(p)}</span>`).join("");el.innerHTML=`<div class="platform-legend">${legend}</div><svg viewBox="0 0 ${W} ${H}" preserveAspectRatio="none">${grid}${series}${labels}</svg>`}
   function renderTrackDetailCharts(){const d=state.trackDetail;if(!d)return;const months=filterTrackMonths(d.monthly||[]);renderLineChart("#trackMonthlyTrend",months,d.completeYm);renderPlatformTrend("#trackPlatformTrend",d.monthly||[],d.platforms||[]);const label=state.trackRange==="all"?"전체 기간":`최근 ${state.trackRange}개월`;$("#tdMonthlyPeriod").textContent=label;$("#tdPlatformTrendPeriod").textContent=label}
-  function closeTrackDetail(){state.selectedTrack=null;state.trackDetail=null;$("#trackDetailView").classList.add("hidden");$("#trackListView").classList.remove("hidden");$("#pageEyebrow").textContent="TRACKS";$("#pageTitle").textContent="음원 분석"}
+  function closeTrackDetail(){
+    const returnInherited=state.page==="tracks"&&trackPeriodInherited;
+    state.selectedTrack=null;state.trackDetail=null;
+    $("#trackDetailView").classList.add("hidden");$("#trackListView").classList.remove("hidden");
+    $("#pageEyebrow").textContent="TRACKS";$("#pageTitle").textContent="음원 분석";
+    if(returnInherited){
+      trackPeriodInherited=false;restorePagePeriod(otherPeriodSelection);
+      loadTracks().catch(error=>toast(error.message,"error"));
+    }
+  }
   async function loadTrackDetail(song){if(!song)return;state.selectedTrack=song;$("#trackListView").classList.add("hidden");$("#trackDetailView").classList.remove("hidden");$("#pageEyebrow").textContent="TRACK DETAIL";$("#pageTitle").textContent="음원 상세 분석";$("#trackDetailTitle").textContent=song;$("#trackDetailMeta").textContent="불러오는 중…";const d=await api(`/analytics?view=track-detail&${periodQuery()}&song=${encodeURIComponent(song)}`);if(state.scope==="all")d.monthly=normalizeTrackMonths(d.monthly||[],d.summary?.first_month,d.completeYm||d.summary?.latest_month);else d.monthly=d.monthly||[];state.trackDetail=d;const s=d.summary||{},r=d.recent||{},artists=s.artists||"-",albums=s.albums||"-";if($("#tdRevenueLabel"))$("#tdRevenueLabel").textContent=state.scope==="all"?"누적 수익":state.scope==="year"?`${state.periodYear}년 수익`:`${state.periodMonth} 수익`;if($("#tdRecentLabel"))$("#tdRecentLabel").textContent=state.scope==="month"?"선택월":"최근 3개월";if($("#trackPlatformCurrentHead"))$("#trackPlatformCurrentHead").textContent=state.scope==="month"?"선택월":"최근3M";$("#trackDetailTitle").textContent=s.song_title||song;$("#trackDetailMeta").textContent=`${artists} · ${albums} · ${num(s.rows_count)}건`;$("#tdRevenue").textContent=money(s.revenue);$("#tdActivePeriod").textContent=`${s.first_month||"-"} ~ ${s.latest_month||"-"} · ${num(s.active_months)}개월`;$("#tdRecent3").textContent=money(r.recent3_revenue);$("#tdRecentGrowth").textContent=state.scope==="month"?`전월 대비 ${pct(r.recent3_growth_pct)}`:`직전 3개월 대비 ${pct(r.recent3_growth_pct)}`;$("#tdRecent12").textContent=money(r.recent12_revenue);$("#tdRecent12Share").textContent=Number(s.revenue||0)>0?`누적의 ${(Number(r.recent12_revenue||0)/Number(s.revenue)*100).toFixed(1)}%`:"누적 대비 -";$("#tdYtd").textContent=money(r.ytd_revenue);$("#tdYoy").textContent=`전년 동기간 대비 ${pct(r.ytd_yoy_pct)}`;$("#tdActualCount").textContent=num(s.actual_count);$("#tdAnalysisCount").textContent=`분석 카운트 ${num(s.analysis_count)} · 추정 ${num(s.estimated_rows)}행`;$("#tdPlatforms").textContent=`${num(s.platforms_count)}개 플랫폼`;$("#tdLatestMonth").textContent=`최근월 ${s.latest_month||"-"} · ${num(s.distributors_count)}개 유통사`;const trend=trackTrendLabel(r.recent3_revenue,r.prev3_revenue);$("#trackTrendBadge").textContent=trend.label;$("#trackTrendBadge").className=`trend-pill ${trend.cls}`;$("#tdPlatformPeriod").textContent=comparisonLabel(d);renderBars("#trackYearBars",(d.yearly||[]).map(x=>({...x,label:`${x.year}년`})),"label","revenue");renderBars("#trackPlatformBars",(d.platforms||[]).slice(0,12),"platform","revenue");renderBars("#trackDistributorBars",d.distributors||[],"distributor","revenue");const top=(d.platforms||[])[0];$("#tdTopPlatform").textContent=top?`TOP ${top.platform} · ${Number(top.share_pct||0).toFixed(1)}%`:"TOP -";$("#trackPlatformsBody").innerHTML=(d.platforms||[]).map(x=>`<tr><td><b>${esc(x.platform)}</b><div class="table-sub">${esc(x.distributors||"")}</div></td><td class="num">${money(x.revenue)}</td><td class="num">${Number(x.share_pct||0).toFixed(1)}%</td><td class="num">${money(x.current_revenue)}</td><td class="num">${deltaHtml(x.delta)}</td><td class="num">${growthHtml(x.growth_pct,x.current_revenue,x.previous_revenue)}</td><td class="num">${num(x.actual_count)}</td><td class="num">${num(x.analysis_count)}</td><td class="num">${x.rpm_actual===null?'-':money(x.rpm_actual)}</td><td>${esc(x.latest_month||"-")}</td></tr>`).join("");$("#trackMonthsBody").innerHTML=[...(d.monthly||[])].reverse().map(x=>`<tr><td><b>${esc(x.ym)}</b></td><td class="num">${money(x.revenue)}</td><td class="num">${growthHtml(x.mom_pct,x.revenue,x.previous_revenue)}</td><td class="num">${num(x.actual_count)}</td><td class="num">${num(x.analysis_count)}</td><td class="num">${num(x.platforms_count)}</td><td class="num">${num(x.distributors_count)}</td><td class="num">${num(x.rows_count)}</td></tr>`).join("");renderTrackDetailCharts()}
   async function loadDashboard(){const d=await api(`/analytics?view=overview&${periodQuery()}`);$("#latestYm").textContent=d.latestYm||"-";$("#completeYm").textContent=d.completeYm||"-";const incomplete=!!(d.latestYm&&!d.completeYm)||!!(d.latestYm&&d.completeYm&&d.latestYm>d.completeYm);$("#completeBadge").textContent=incomplete?"이후 월 미완결":"완결";$("#completeBadge").className=`badge ${incomplete?"warn":"good"}`;$("#kpiRevenue").textContent=money(d.totals.revenue_total);$("#kpiRows").textContent=`${num(d.totals.rows_count)}건 · ${num(d.totals.distributors_count)}개 유통사`;if(state.scope==="month"){$("#kpiRevenueLabel").textContent=`${state.periodMonth} 수익`;$("#kpiCompleteLabel").textContent="전월 대비";$("#kpiCompleteRevenue").textContent=pct(d.recent.mom_pct);$("#kpiMom").textContent=`전월 ${money(d.recent.previous_month_revenue)}`;$("#kpiRecentLabel").textContent="분석 카운트";$("#kpiRecent3").textContent=num(d.totals.analysis_count_total);$("#kpiRecentGrowth").textContent=`실제 ${num(d.totals.actual_count_total)}`}else{$("#kpiRevenueLabel").textContent=state.scope==="year"?`${state.periodYear}년 수익`:"누적 정산수익";$("#kpiCompleteLabel").textContent="최근 완결월 수익";$("#kpiCompleteRevenue").textContent=money(d.recent.complete_revenue);$("#kpiMom").textContent=`전월 대비 ${pct(d.recent.mom_pct)}`;$("#kpiRecentLabel").textContent="최근 3개월 수익";$("#kpiRecent3").textContent=money(d.recent.revenue);$("#kpiRecentGrowth").textContent=`직전 3개월 대비 ${pct(d.recent.growth_pct)}`}$("#kpiTracks").textContent=`${num(d.totals.tracks_count)}곡`;$("#kpiAlbums").textContent=`${num(d.totals.albums_count)}앨범`;$("#kpiPlatforms").textContent=`${num(d.totals.platforms_count)}개`;const conc=Number(d.concentration.total||0)>0?Number(d.concentration.platform_top4||0)/Number(d.concentration.total)*100:0;$("#kpiPlatformConc").textContent=`TOP4 수익 비중 ${conc.toFixed(1)}%`;const qTotal=Number(d.totals.rows_count||0),qActual=Number(d.totals.actual_rows||0),qEst=Number(d.totals.estimated_rows||0),qZero=Number(d.totals.zero_adjusted_rows||0);$("#kpiCountQuality").textContent=qTotal?`${(qActual/qTotal*100).toFixed(1)}% 실제`:"-";$("#kpiCountQualitySub").textContent=`실제 ${num(qActual)} · 0보정 ${num(qZero)} · 추정 ${num(qEst)}`;renderLineChart("#revenueTrend",d.monthly,d.completeYm);renderRank("#topTracks",d.topTracks,"song_title","revenue");renderBars("#topPlatforms",d.topPlatforms,"platform","revenue");renderMomentum("#trackMomentum",d.trackMomentum,"song_title");renderMomentum("#platformMomentum",d.platformMomentum,"platform");const per=comparisonLabel(d);$("#trackMomentumPeriod").textContent=per;$("#platformMomentumPeriod").textContent=per;$("#coverageCards").innerHTML=(d.coverage||[]).map(x=>`<div class="coverage-card"><h3>${esc(x.distributor)}</h3><div class="coverage-meta"><div><span>누적 수익</span><strong>${money(x.revenue)}</strong></div><div><span>정산 건수</span><strong>${num(x.rows_count)}</strong></div><div><span>수익 최신월</span><strong>${esc(x.latest_occurrence||"-")}</strong></div><div><span>정산 최신월</span><strong>${esc(x.latest_settlement||"-")}</strong></div></div></div>`).join("")}
 
@@ -210,7 +265,7 @@
   // KENNETH_ALL_TRENDS_V1: reuse the authenticated snapshot reader and selected period.
   async function loadAllTrends(){
     if(!window.SettlementAllTrends)throw new Error("전체 트렌드 파일을 불러오지 못했습니다. Ctrl+F5로 새로고침해주세요.");
-    await SettlementAllTrends.load(api,{scope:state.scope,period:state.scope==="year"?state.periodYear:state.scope==="month"?state.periodMonth:null,openTrack:song=>{state.selectedTrack=song;nav("tracks")}});
+    await SettlementAllTrends.load(api,{scope:state.scope,period:state.scope==="year"?state.periodYear:state.scope==="month"?state.periodMonth:null,openTrack:song=>{state.selectedTrack=song;nav("tracks",{inheritPeriod:true})}});
   }
 
   async function loadTracks(){if(state.selectedTrack){await loadTrackDetail(state.selectedTrack);return}const d=await api(`/analytics?view=tracks&${periodQuery()}`);state.tracks=d.rows||[];$("#trackPeriod").textContent="추세 비교: "+comparisonLabel(d);renderTracks()}
