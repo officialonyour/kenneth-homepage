@@ -15,17 +15,58 @@
   function toast(msg,type="ok"){const el=document.createElement("div");el.className=`toast ${type}`;el.textContent=msg;$("#toastHost").append(el);setTimeout(()=>el.classList.add("show"),10);setTimeout(()=>{el.classList.remove("show");setTimeout(()=>el.remove(),250)},3500)}
   function debounce(fn,ms=260){let t;return(...a)=>{clearTimeout(t);t=setTimeout(()=>fn(...a),ms)}}
   const getCache=new Map(); const GET_CACHE_TTL=90*1000;
+  let getCacheVersion=null;
   const cloneData=d=>typeof structuredClone==="function"?structuredClone(d):JSON.parse(JSON.stringify(d));
-  function clearGetCache(){getCache.clear()}
-  async function api(path,opt={}){const method=String(opt.method||"GET").toUpperCase(),force=!!opt.force,cacheable=method==="GET"&&(path.startsWith("/analytics?")||path==="/meta");if(cacheable&&!force){const hit=getCache.get(path);if(hit&&Date.now()-hit.t<GET_CACHE_TTL)return cloneData(hit.d)}const fetchOpt={headers:{"content-type":"application/json",...(opt.headers||{})},...opt};delete fetchOpt.force;const r=await fetch(`${API}${path}`,fetchOpt);let d={};try{d=await r.json()}catch{}if(r.status===401){showLogin();throw new Error("로그인이 만료되었습니다.")}if(!r.ok||d.ok===false){if(String(d.error||"").includes("no such table"))throw new Error("D1에 002_settlement_analytics.sql을 먼저 실행해주세요.");throw new Error(d.error||`HTTP ${r.status}`)}if(method!=="GET")clearGetCache();if(cacheable)getCache.set(path,{t:Date.now(),d:cloneData(d)});return d}
-  function showLogin(){ $("#appView").classList.add("hidden");$("#setupView").classList.add("hidden");$("#loginView").classList.remove("hidden") }
+  function clearGetCache(){
+    getCache.clear();getCacheVersion=null;
+    if(window.SettlementRead)SettlementRead.clear();
+  }
+  async function api(path,opt={}){
+    const method=String(opt.method||"GET").toUpperCase(),force=!!opt.force;
+    const cacheable=method==="GET"&&(path.startsWith("/analytics?")||path==="/meta");
+    let observedVersion=getCacheVersion;
+    if(cacheable&&!force){const hit=getCache.get(path);if(hit&&hit.version===getCacheVersion&&Date.now()-hit.t<GET_CACHE_TTL)return cloneData(hit.d)}
+    const fetchOpt={headers:{"content-type":"application/json",...(opt.headers||{})},...opt};
+    delete fetchOpt.force;delete fetchOpt.readRetry;
+    const r=await fetch(`${API}${path}`,fetchOpt);
+    let d={},raw="";try{raw=await r.text();d=JSON.parse(raw)}catch{}
+    if(r.status===401){showLogin();throw new Error("로그인이 만료되었습니다.")}
+    if(!r.ok||d.ok===false){
+      if(String(d.error||"").includes("no such table"))throw new Error("D1에 002_settlement_analytics.sql을 먼저 실행해주세요.");
+      if(raw.includes("Worker exceeded resource limits"))throw new Error("서버 처리 한도를 초과했습니다. 새 배포가 완료됐는지 확인한 뒤 Ctrl+F5로 새로고침해주세요.");
+      throw new Error(d.error||`HTTP ${r.status}`);
+    }
+    if(method==="GET"&&d.processing==="browser_snapshot_v1"){
+      if(!window.SettlementRead)throw new Error("분석 파일을 불러오지 못했습니다. Ctrl+F5로 새로고침해주세요.");
+      observedVersion=d.snapshot?.snapshotVersion;
+      if(observedVersion!==getCacheVersion){getCache.clear();getCacheVersion=observedVersion}
+      try{d=await SettlementRead.query(API,path,d)}catch(error){
+        if(error.message==="snapshot_changed_retry"&&!opt.readRetry){clearGetCache();return api(path,{...opt,force:true,readRetry:true})}
+        if(error.message==="로그인이 만료되었습니다.")showLogin();
+        throw error;
+      }
+    }
+    if(method!=="GET")clearGetCache();
+    if(cacheable&&observedVersion===getCacheVersion)getCache.set(path,{t:Date.now(),version:observedVersion,d:cloneData(d)});
+    return d;
+  }
+  function showLogin(){
+    clearGetCache();
+    $("#appView").classList.add("hidden");$("#setupView").classList.add("hidden");$("#loginView").classList.remove("hidden");
+  }
   function showSetup(){ $("#appView").classList.add("hidden");$("#loginView").classList.add("hidden");$("#setupView").classList.remove("hidden") }
   async function enterApp(target="dashboard"){
     $("#loginView").classList.add("hidden");$("#setupView").classList.add("hidden");$("#appView").classList.remove("hidden");
+    if(window.SettlementRead)SettlementRead.setProgressHandler(value=>{
+      const el=$("#readProgress");if(!el)return;
+      el.classList.toggle("hidden",!value);
+      el.textContent=value?`정산 자료 불러오는 중… ${num(value.received)} / ${num(value.total)}건`:"";
+    });
     try{await loadMeta();nav(target)}catch(e){
       state.meta={distributors:[],platforms:[],bounds:{}};
       nav("import");
-      toast("D1 일일 한도에 도달했거나 R2 분석 캐시가 비어 있습니다. 통합 엑셀을 선택한 뒤 정산 데이터 반영을 눌러 R2 캐시를 생성해주세요.","error");
+      const message=e.message==="r2_seed_required"?"저장된 정산 자료가 없습니다. 정산 엑셀을 선택해 반영해주세요.":e.message;
+      toast(message,"error");
     }
   }
   async function checkStatus(){try{const d=await api("/auth/status");if(!d.configured){showSetup();return}if(!d.authenticated){showLogin();return}await enterApp(state.page)}catch(e){showSetup();toast(e.message,"error")}}

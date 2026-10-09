@@ -20,16 +20,29 @@ function bytesToB64(bytes) {
   return btoa(raw);
 }
 function b64ToBytes(text) {
-  const raw = atob(String(text || ""));
+  const value = String(text || "");
+  if (typeof Uint8Array.fromBase64 === "function") return Uint8Array.fromBase64(value);
+  const raw = atob(value);
   const out = new Uint8Array(raw.length);
   for (let i = 0; i < raw.length; i++) out[i] = raw.charCodeAt(i);
   return out;
 }
+let lastCryptoSecret = null, lastCryptoKey = null;
 async function cryptoKey(env) {
   const secret = String(env.SETTLEMENT_SESSION_SECRET || "");
   if (!secret) throw new Error("settlement_session_secret_missing");
-  const digest = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(secret));
-  return crypto.subtle.importKey("raw", digest, { name: "AES-GCM" }, false, ["encrypt", "decrypt"]);
+  if (lastCryptoSecret === secret && lastCryptoKey) return lastCryptoKey;
+  const pending = (async () => {
+    const digest = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(secret));
+    return crypto.subtle.importKey("raw", digest, { name: "AES-GCM" }, false, ["encrypt", "decrypt"]);
+  })();
+  lastCryptoSecret = secret;
+  lastCryptoKey = pending;
+  try { return await pending; }
+  catch (error) {
+    if (lastCryptoKey === pending) { lastCryptoSecret = null; lastCryptoKey = null; }
+    throw error;
+  }
 }
 async function encodePrivateJson(env, value) {
   const iv = crypto.getRandomValues(new Uint8Array(12));
@@ -442,4 +455,80 @@ export async function removeSnapshotRowById(env, id) {
 
 export function getR2Status(env) {
   return { r2Ready: !!bucket(env), supportsAppend: true, binding: env.MEDIA ? "MEDIA" : env.SETTLEMENT_CACHE ? "SETTLEMENT_CACHE" : null };
+}
+
+function readManifestFromMeta(meta) {
+  if (!meta) throw new Error("r2_seed_required");
+  if (typeof meta.snapshotVersion !== "string" || !/^[a-zA-Z0-9_-]{1,180}$/.test(meta.snapshotVersion) ||
+      !Number.isSafeInteger(meta.rowsCount) || meta.rowsCount < 0 ||
+      !Number.isSafeInteger(meta.chunkCount) || meta.chunkCount < 0 ||
+      meta.chunkCount !== Math.ceil(meta.rowsCount / CHUNK_SIZE)) throw new Error("invalid_r2_snapshot_meta");
+  const originalMappings = meta.mappings === undefined ? [] : meta.mappings;
+  if (!Array.isArray(originalMappings) || originalMappings.some(mapping => !mapping || typeof mapping !== "object" || Array.isArray(mapping))) throw new Error("invalid_r2_snapshot_meta");
+  const mappings = originalMappings.map(mapping => ({
+    source_key: String(mapping.source_key ?? ""),
+    platform: String(mapping.platform ?? ""),
+    original_platform: String(mapping.original_platform ?? ""),
+    original_service: String(mapping.original_service ?? ""),
+  }));
+  const mappingCount = meta.mappingCount === undefined ? mappings.length : meta.mappingCount;
+  if (!Number.isInteger(mappingCount) || mappingCount !== mappings.length) throw new Error("invalid_r2_snapshot_meta");
+  return { snapshotVersion: meta.snapshotVersion, rowsCount: meta.rowsCount, chunkCount: meta.chunkCount,
+    chunkSize: CHUNK_SIZE, mappings, mappingCount, builtAt: typeof meta.builtAt === "string" ? meta.builtAt : null,
+    source: "r2_chunked_v1", d1RowsRead: 0 };
+}
+
+// These read-only helpers deliberately avoid legacy D1 fallback and never
+// rebuild a whole snapshot inside one Worker request.
+export async function getSettlementSnapshotManifest(env, expectedSnapshotVersion = undefined) {
+  if (!bucket(env)) throw new Error("r2_binding_missing");
+  const manifest = readManifestFromMeta(await getMeta(env));
+  if (expectedSnapshotVersion !== undefined && String(expectedSnapshotVersion) !== manifest.snapshotVersion) throw new Error("snapshot_changed_retry");
+  return manifest;
+}
+
+export async function readSettlementSnapshotChunk(env, { snapshotVersion, chunkNo }) {
+  const version = String(snapshotVersion ?? "").trim();
+  if (!version) throw new Error("snapshot_version_required");
+  const no = Number(chunkNo);
+  if (chunkNo === null || chunkNo === undefined || String(chunkNo).trim() === "" || !Number.isSafeInteger(no) || no < 0) throw new Error("invalid_chunk_no");
+  const manifest = await getSettlementSnapshotManifest(env, version);
+  if (no >= manifest.chunkCount) throw new Error("invalid_chunk_no");
+  const b = bucket(env), object = await b.get(`${PREFIX}/source/${version}/${String(no).padStart(4, "0")}.json`);
+  if (!object) throw new Error("r2_snapshot_incomplete");
+  const parsed = await getPrivateJson(env, object), rows = Array.isArray(parsed) ? parsed : parsed?.rows;
+  const expectedRows = Math.min(CHUNK_SIZE, manifest.rowsCount - no * CHUNK_SIZE);
+  if (!Array.isArray(rows) || rows.length !== expectedRows || rows.some(row => !row || typeof row !== "object" || Array.isArray(row))) throw new Error("r2_snapshot_count_mismatch");
+  // Detect an import finishing while a chunk is in flight. The browser also
+  // performs a final manifest check before adopting the completed snapshot.
+  await getSettlementSnapshotManifest(env, version);
+  return { snapshotVersion: version, chunkNo: no, rows, rowsCount: manifest.rowsCount, chunkCount: manifest.chunkCount };
+}
+
+export async function readSettlementSnapshotChunkBody(env, options) {
+  const version = String(options.snapshotVersion ?? options.version ?? "").trim();
+  const chunkNo = options.chunkNo ?? options.no, no = Number(chunkNo);
+  if (!version) throw new Error("snapshot_version_required");
+  if (chunkNo === null || chunkNo === undefined || String(chunkNo).trim() === "" || !Number.isSafeInteger(no) || no < 0) throw new Error("invalid_chunk_no");
+  const manifest = await getSettlementSnapshotManifest(env, version);
+  if (no >= manifest.chunkCount) throw new Error("invalid_chunk_no");
+  const object = await bucket(env).get(`${PREFIX}/source/${version}/${String(no).padStart(4, "0")}.json`);
+  if (!object) throw new Error("r2_snapshot_incomplete");
+  const box = JSON.parse(await object.text());
+  if (!box || box.v !== 1 || !box.iv || !box.data) throw new Error("invalid_r2_ciphertext");
+  // Authenticate/decrypt the stored chunk without parsing and stringifying
+  // hundreds of rows inside a Worker. The browser verifies its JSON shape and
+  // exact row count before adopting any part of the completed snapshot.
+  const key = await cryptoKey(env);
+  const body = await crypto.subtle.decrypt({ name: "AES-GCM", iv: b64ToBytes(box.iv) }, key, b64ToBytes(box.data));
+  await getSettlementSnapshotManifest(env, version);
+  return { body, snapshotVersion: version, chunkNo: no, rowsCount: manifest.rowsCount, chunkCount: manifest.chunkCount };
+}
+
+export async function readSettlementManifest(env, expectedSnapshotVersion = undefined) {
+  return getSettlementSnapshotManifest(env, expectedSnapshotVersion);
+}
+
+export async function readSettlementChunk(env, snapshotVersion, chunkNo) {
+  return readSettlementSnapshotChunk(env, { snapshotVersion, chunkNo });
 }

@@ -1,55 +1,12 @@
 import { json, requireDb } from "../../_shared/settlement.js";
-import { loadSettlementRows, invalidateAnalyticsCache, appendSnapshotRow, removeSnapshotRowById } from "../../_shared/settlement-r2-cache.js";
+import { invalidateAnalyticsCache, appendSnapshotRow, removeSnapshotRowById } from "../../_shared/settlement-r2-cache.js";
 
 function txt(v,n=300){return String(v??"").trim().slice(0,n)}
 function num(v){const n=Number(v);return Number.isFinite(n)?n:null}
 function monthShift(ymValue,delta){if(!/^\d{4}-\d{2}$/.test(String(ymValue||"")))return null;const d=new Date(Date.UTC(Number(ymValue.slice(0,4)),Number(ymValue.slice(5,7))-1+delta,1));return `${d.getUTCFullYear()}-${String(d.getUTCMonth()+1).padStart(2,"0")}`}
 async function hashText(s){const d=new Uint8Array(await crypto.subtle.digest("SHA-256",new TextEncoder().encode(s)));return Array.from(d).map(b=>b.toString(16).padStart(2,"0")).join("")}
 
-function includesText(r,q){
-  if(!q)return true;
-  const needle=q.toLowerCase();
-  return [r.song_title,r.artist,r.album_title,r.platform,r.original_platform,r.original_service]
-    .some(v=>String(v||"").toLowerCase().includes(needle));
-}
-
-export async function onRequestGet({request,env}){
-  const u=new URL(request.url);
-  const q=txt(u.searchParams.get("q"));
-  const distributor=txt(u.searchParams.get("distributor"));
-  const platform=txt(u.searchParams.get("platform"));
-  const scope=["year","month"].includes(u.searchParams.get("scope"))?u.searchParams.get("scope"):"all";
-  const period=txt(u.searchParams.get("period"),7);
-  const from=txt(u.searchParams.get("from"),7),to=txt(u.searchParams.get("to"),7);
-  const countBasis=txt(u.searchParams.get("count_basis"),30);
-  const page=Math.max(1,Number(u.searchParams.get("page"))||1);
-  const limit=Math.min(500,Math.max(1,Number(u.searchParams.get("limit"))||50));
-  let snapshot;
-  try{snapshot=await loadSettlementRows(env)}catch(error){const msg=String(error?.message||error||"r2_seed_required");return json({ok:false,error:msg},msg==="r2_seed_required"?503:500)}
-  let rows=snapshot.rows||[];
-  rows=rows.filter(r=>{
-    if(!includesText(r,q))return false;
-    if(distributor&&String(r.distributor||"")!==distributor)return false;
-    if(platform&&String(r.platform||"")!==platform)return false;
-    if(countBasis&&String(r.count_basis||"")!==countBasis)return false;
-    const ym=String(r.occurrence_ym||"");
-    if(scope==="year"&&/^\d{4}$/.test(period)&&!ym.startsWith(period+"-"))return false;
-    if(scope==="month"&&/^\d{4}-\d{2}$/.test(period)&&ym!==period)return false;
-    if(/^\d{4}-\d{2}$/.test(from)&&ym<from)return false;
-    if(/^\d{4}-\d{2}$/.test(to)&&ym>to)return false;
-    return true;
-  });
-  rows.sort((a,b)=>String(b.occurrence_ym||"").localeCompare(String(a.occurrence_ym||"")) || Number(b.id||b.source_row_no||0)-Number(a.id||a.source_row_no||0));
-  const total=rows.length,offset=(page-1)*limit;
-  const pageRows=rows.slice(offset,offset+limit).map(r=>({
-    id:Number.isFinite(Number(r.id))?Number(r.id):null,
-    source_row_no:r.source_row_no??null,distributor:r.distributor??"",source_file:r.source_file??"",settlement_ym:r.settlement_ym??null,occurrence_ym:r.occurrence_ym??null,
-    artist:r.artist??"",album_title:r.album_title??"",song_title:r.song_title??"",original_platform:r.original_platform??"",original_service:r.original_service??"",platform:r.platform??"",
-    original_count:r.original_count??null,adjusted_count:r.adjusted_count??null,analysis_count:r.analysis_count??null,count_basis:r.count_basis??"missing",estimate_method:r.estimate_method??"",estimate_confidence:r.estimate_confidence??"",
-    settlement_amount:Number(r.settlement_amount||0),revenue_source:r.revenue_source??"",notes:r.notes??""
-  }));
-  return json({ok:true,scope,period:scope==="all"?null:period,rows:pageRows,total,page,limit,readOnly:pageRows.some(r=>r.id===null),_d1:{strategy:snapshot.source,queries:Number(snapshot.d1RowsRead||0)>0?1:0,rowsRead:Number(snapshot.d1RowsRead||0)}});
-}
+export { onRequestGet } from "./cache/read.js";
 
 export async function onRequestPost({request,env}){
   const db=requireDb(env);let x;try{x=await request.json()}catch{return json({ok:false,error:"invalid_json"},400)}

@@ -9,7 +9,8 @@
   <link rel="stylesheet" href="./style.css?v=13" />
   <script defer src="./xlsx-local.js?v=5"></script>
   <script defer src="./import-parser.js?v=1"></script>
-  <script defer src="./app.js?v=17"></script>
+  <script defer src="./read-client.js?v=1"></script>
+  <script defer src="./app.js?v=18"></script>
 </head>
 <body>
   <div id="toastHost" class="toast-host" aria-live="polite"></div>
@@ -54,6 +55,7 @@
     </aside>
 
     <main class="main-content">
+      <div id="readProgress" class="basis-note hidden" role="status" aria-live="polite"></div>
       <header class="topbar">
         <div><p id="pageEyebrow" class="eyebrow">OVERVIEW</p><h1 id="pageTitle">대시보드</h1></div>
         <div class="topbar-actions">
