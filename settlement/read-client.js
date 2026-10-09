@@ -98,6 +98,7 @@
       if (received !== meta.rowsCount || final.snapshot?.snapshotVersion !== meta.snapshotVersion ||
           final.snapshot?.rowsCount !== meta.rowsCount || final.snapshot?.chunkCount !== meta.chunkCount) throw new Error("snapshot_changed_retry");
       await send("commit", { snapshotVersion: meta.snapshotVersion });
+      if (generation !== currentGeneration) throw new Error("snapshot_read_cancelled");
       version = meta.snapshotVersion;
     })();
     load = ticket;
@@ -107,12 +108,16 @@
   }
 
   async function query(apiRoot, path, descriptor) {
+    const currentGeneration = generation;
     const meta = descriptor.snapshot;
     await ensureSnapshot(apiRoot, meta);
+    if (generation !== currentGeneration) throw new Error("snapshot_read_cancelled");
     const url = new URL(path, "https://settlement.invalid");
     const parameters = Object.fromEntries(url.searchParams);
     const view = url.pathname === "/meta" ? "meta" : url.pathname === "/records" ? "records" : "analytics";
-    return send("query", { view, parameters, snapshotVersion: meta.snapshotVersion });
+    const result = await send("query", { view, parameters, snapshotVersion: meta.snapshotVersion });
+    if (generation !== currentGeneration) throw new Error("snapshot_read_cancelled");
+    return result;
   }
 
   window.SettlementRead = { query, clear: release, setProgressHandler: handler => { progress = handler; } };

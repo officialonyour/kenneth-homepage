@@ -14,22 +14,78 @@
   const ymShort=s=>/^\d{4}-\d{2}$/.test(String(s||""))?String(s).slice(2):String(s||"-");
   function toast(msg,type="ok"){const el=document.createElement("div");el.className=`toast ${type}`;el.textContent=msg;$("#toastHost").append(el);setTimeout(()=>el.classList.add("show"),10);setTimeout(()=>{el.classList.remove("show");setTimeout(()=>el.remove(),250)},3500)}
   function debounce(fn,ms=260){let t;return(...a)=>{clearTimeout(t);t=setTimeout(()=>fn(...a),ms)}}
-  const getCache=new Map(); const GET_CACHE_TTL=90*1000;
-  let getCacheVersion=null;
+  // KENNETH_READ_REUSE_V1: one private snapshot per authenticated browser tab.
+  const getCache=new Map(),getInFlight=new Map();
+  const GET_CACHE_LIMIT=32,AUTH_CHECK_TTL=90*1000;
+  let getCacheVersion=null,snapshotDescriptor=null,getCacheGeneration=0;
+  let authCheckedAt=null,authCheck=null;
   const cloneData=d=>typeof structuredClone==="function"?structuredClone(d):JSON.parse(JSON.stringify(d));
-  function clearGetCache(){
-    getCache.clear();getCacheVersion=null;
-    if(window.SettlementRead)SettlementRead.clear();
+  function assertCacheGeneration(expected){
+    if(expected!==getCacheGeneration)throw new Error("snapshot_read_cancelled");
   }
-  async function api(path,opt={}){
-    const method=String(opt.method||"GET").toUpperCase(),force=!!opt.force;
-    const cacheable=method==="GET"&&(path.startsWith("/analytics?")||path==="/meta");
-    let observedVersion=getCacheVersion;
-    if(cacheable&&!force){const hit=getCache.get(path);if(hit&&hit.version===getCacheVersion&&Date.now()-hit.t<GET_CACHE_TTL)return cloneData(hit.d)}
+  function clearGetCache({keepSnapshot=false}={}){
+    getCacheGeneration++;
+    getCache.clear();getInFlight.clear();getCacheVersion=null;snapshotDescriptor=null;
+    authCheckedAt=null;authCheck=null;
+    if(!keepSnapshot&&window.SettlementRead)SettlementRead.clear();
+  }
+  async function ensureReadSession(expected){
+    const age=authCheckedAt===null?Infinity:Date.now()-authCheckedAt;
+    if(age>=0&&age<AUTH_CHECK_TTL)return;
+    if(!authCheck){
+      const ticket={promise:null};
+      ticket.promise=(async()=>{
+        const response=await fetch(`${API}/auth/status`,{cache:"no-store"});
+        let status={};try{status=await response.json()}catch{}
+        assertCacheGeneration(expected);
+        if(response.status===401||status.authenticated===false||status.configured===false){
+          showLogin();throw new Error("로그인이 만료되었습니다.");
+        }
+        if(!response.ok||status.ok===false||status.authenticated!==true)throw new Error("로그인 상태를 확인하지 못했습니다. 다시 시도해주세요.");
+        authCheckedAt=Date.now();
+      })();
+      authCheck=ticket;
+    }
+    const ticket=authCheck;
+    try{await ticket.promise;assertCacheGeneration(expected)}
+    finally{if(authCheck===ticket)authCheck=null}
+  }
+  function rememberGet(path,data,version){
+    getCache.delete(path);getCache.set(path,{version,d:cloneData(data)});
+    while(getCache.size>GET_CACHE_LIMIT)getCache.delete(getCache.keys().next().value);
+  }
+  async function readSnapshot(path,descriptor,opt,expected){
+    if(!window.SettlementRead)throw new Error("분석 파일을 불러오지 못했습니다. Ctrl+F5로 새로고침해주세요.");
+    assertCacheGeneration(expected);
+    const observedVersion=descriptor.snapshot?.snapshotVersion;
+    if(observedVersion!==getCacheVersion){getCache.clear();getCacheVersion=observedVersion}
+    snapshotDescriptor=descriptor;
+    let data;
+    try{data=await SettlementRead.query(API,path,descriptor)}catch(error){
+      assertCacheGeneration(expected);
+      if(error.message==="로그인이 만료되었습니다.")showLogin();
+      throw error;
+    }
+    assertCacheGeneration(expected);
+    // A slower computation for the previous version cannot fill the new cache.
+    if(observedVersion===getCacheVersion)rememberGet(path,data,observedVersion);
+    return data;
+  }
+  async function performApi(path,opt,method,cacheable,expected){
+    if(cacheable){
+      await ensureReadSession(expected);assertCacheGeneration(expected);
+      if(!opt.force){
+        const hit=getCache.get(path);
+        if(hit&&hit.version===getCacheVersion){getCache.delete(path);getCache.set(path,hit);return cloneData(hit.d)}
+        if(snapshotDescriptor)return readSnapshot(path,snapshotDescriptor,opt,expected);
+      }
+    }
     const fetchOpt={headers:{"content-type":"application/json",...(opt.headers||{})},...opt};
     delete fetchOpt.force;delete fetchOpt.readRetry;
+    if(method==="GET")fetchOpt.cache="no-store";
     const r=await fetch(`${API}${path}`,fetchOpt);
     let d={},raw="";try{raw=await r.text();d=JSON.parse(raw)}catch{}
+    assertCacheGeneration(expected);
     if(r.status===401){showLogin();throw new Error("로그인이 만료되었습니다.")}
     if(!r.ok||d.ok===false){
       if(String(d.error||"").includes("no such table"))throw new Error("D1에 002_settlement_analytics.sql을 먼저 실행해주세요.");
@@ -38,19 +94,37 @@
       const error=new Error(messages[d.error]||d.error||`HTTP ${r.status}`);
       error.status=r.status;error.details=d;throw error;
     }
-    if(method==="GET"&&d.processing==="browser_snapshot_v1"){
-      if(!window.SettlementRead)throw new Error("분석 파일을 불러오지 못했습니다. Ctrl+F5로 새로고침해주세요.");
-      observedVersion=d.snapshot?.snapshotVersion;
-      if(observedVersion!==getCacheVersion){getCache.clear();getCacheVersion=observedVersion}
-      try{d=await SettlementRead.query(API,path,d)}catch(error){
-        if(error.message==="snapshot_changed_retry"&&!opt.readRetry){clearGetCache();return api(path,{...opt,force:true,readRetry:true})}
-        if(error.message==="로그인이 만료되었습니다.")showLogin();
-        throw error;
-      }
-    }
+    if(method==="GET"&&path==="/auth/status"&&d.authenticated===true)authCheckedAt=Date.now();
+    if(method==="GET"&&d.processing==="browser_snapshot_v1")return readSnapshot(path,d,opt,expected);
     if(method!=="GET")clearGetCache();
-    if(cacheable&&observedVersion===getCacheVersion)getCache.set(path,{t:Date.now(),version:observedVersion,d:cloneData(d)});
     return d;
+  }
+  async function api(path,opt={}){
+    const method=String(opt.method||"GET").toUpperCase();
+    const cacheable=method==="GET"&&(path.startsWith("/analytics?")||path.startsWith("/records?")||path==="/meta");
+    const expected=getCacheGeneration,key=`${opt.force?"force":"local"}:${path}`;
+    if(cacheable){
+      const existing=getInFlight.get(key);
+      if(existing&&existing.generation===expected){
+        const data=await existing.promise;assertCacheGeneration(existing.generation);return cloneData(data);
+      }
+      const ticket={generation:expected,promise:null};
+      ticket.promise=(async()=>{
+        try{return await performApi(path,opt,method,true,expected)}catch(error){
+          if(error.message==="snapshot_changed_retry"&&!opt.readRetry&&ticket.generation===getCacheGeneration){
+            clearGetCache();ticket.generation=getCacheGeneration;
+            return api(path,{...opt,force:true,readRetry:true});
+          }
+          throw error;
+        }
+      })();
+      getInFlight.set(key,ticket);
+      try{const data=await ticket.promise;assertCacheGeneration(ticket.generation);return cloneData(data)}
+      finally{if(getInFlight.get(key)===ticket)getInFlight.delete(key)}
+    }
+    const data=await performApi(path,opt,method,false,expected);
+    if(method==="GET")assertCacheGeneration(expected);
+    return data;
   }
   function showLogin(){
     if(window.SettlementAllTrends)SettlementAllTrends.cancel();
@@ -415,6 +489,6 @@
     finally{setDigitalManualBusy(false)}
   }
 
-  function bind(){ $("#loginForm").addEventListener("submit",login);$("#logoutButton").addEventListener("click",logout);$("#retryStatusButton").addEventListener("click",checkStatus);$$(`.nav-group[data-group]`).forEach(b=>b.addEventListener("click",()=>{const g=b.dataset.group,target=(g==="analysis"||g==="settlement")?(state.lastGroupPage[g]||groupDefault[g]):groupDefault[g];nav(target)}));$("#sectionTabs").addEventListener("click",e=>{const b=e.target.closest("[data-page]");if(b)nav(b.dataset.page)});$$(`#periodControl button`).forEach(b=>b.addEventListener("click",()=>setScope(b.dataset.scope)));$("#periodYear").addEventListener("change",e=>{state.periodYear=e.target.value;reloadForPeriod()});$("#periodMonth").addEventListener("change",e=>{state.periodMonth=e.target.value;reloadForPeriod()});$("#refreshButton").addEventListener("click",async()=>{clearGetCache();await loadMeta();await loadPage(state.page)});$("#trackSearch").addEventListener("input",debounce(renderTracks));$("#trackSort").addEventListener("change",renderTracks);$("#tracksBody").addEventListener("click",e=>{const b=e.target.closest("[data-track-open]");if(b)loadTrackDetail(b.dataset.trackOpen)});$("#trackBackButton").addEventListener("click",closeTrackDetail);$$("#trackRangeControl button").forEach(b=>b.addEventListener("click",()=>{state.trackRange=b.dataset.range;$$("#trackRangeControl button").forEach(x=>x.classList.toggle("active",x===b));renderTrackDetailCharts()}));const rr=debounce(()=>{state.recordPage=1;loadRecords()});for(const id of ["recordSearch","recordDistributor","recordPlatform","recordCountBasis"])$("#"+id).addEventListener(id==="recordSearch"?"input":"change",rr);$("#prevPage").addEventListener("click",()=>{if(state.recordPage>1){state.recordPage--;loadRecords()}});$("#nextPage").addEventListener("click",()=>{if(state.recordPage<state.recordPages){state.recordPage++;loadRecords()}});$("#recordsBody").addEventListener("click",e=>{const edit=e.target.closest("[data-digital-edit]");if(edit){const row=digitalRecordRows.get(edit.dataset.digitalEdit);if(row)openDigitalManual(row);return}const b=e.target.closest("[data-delete-id]");if(b)deleteRecord(Number(b.dataset.deleteId))});$("#exportCsvButton").addEventListener("click",exportCsv);$("#openManualButton").addEventListener("click",()=>$("#manualDialog").showModal());$("#manualForm").addEventListener("submit",saveManual);$$("[data-close-dialog]").forEach(b=>b.addEventListener("click",()=>{if(b.dataset.closeDialog==="digitalManualDialog"&&digitalManualBusy)return;$("#"+b.dataset.closeDialog).close()}));$("#openDigitalManualButton").addEventListener("click",()=>openDigitalManual());$("#digitalManualForm").addEventListener("submit",saveDigitalManual);$("#copyDigitalLoginIdButton").addEventListener("click",copyDigitalLoginId);$("#digitalAccountLink").addEventListener("click",e=>{if(digitalManualBusy)e.preventDefault()});$("#digitalManualForm").elements.settlement_ym.addEventListener("change",updateDigitalOccurrence);$("#digitalManualDialog").addEventListener("cancel",e=>{if(digitalManualBusy)e.preventDefault()});$("#fileInput").addEventListener("change",e=>handleFiles(e.target.files));$("#csvPeriodFields").addEventListener("input",handleCsvPeriodChange);$("#csvPeriodFields").addEventListener("change",handleCsvPeriodChange);const dz=$("#dropZone");for(const ev of ["dragenter","dragover"])dz.addEventListener(ev,e=>{e.preventDefault();dz.classList.add("drag")});for(const ev of ["dragleave","drop"])dz.addEventListener(ev,e=>{e.preventDefault();dz.classList.remove("drag")});dz.addEventListener("drop",e=>handleFiles(e.dataTransfer.files));$("#importButton").addEventListener("click",importRows)}
+  function bind(){ $("#loginForm").addEventListener("submit",login);$("#logoutButton").addEventListener("click",logout);$("#retryStatusButton").addEventListener("click",checkStatus);$$(`.nav-group[data-group]`).forEach(b=>b.addEventListener("click",()=>{const g=b.dataset.group,target=(g==="analysis"||g==="settlement")?(state.lastGroupPage[g]||groupDefault[g]):groupDefault[g];nav(target)}));$("#sectionTabs").addEventListener("click",e=>{const b=e.target.closest("[data-page]");if(b)nav(b.dataset.page)});$$(`#periodControl button`).forEach(b=>b.addEventListener("click",()=>setScope(b.dataset.scope)));$("#periodYear").addEventListener("change",e=>{state.periodYear=e.target.value;reloadForPeriod()});$("#periodMonth").addEventListener("change",e=>{state.periodMonth=e.target.value;reloadForPeriod()});$("#refreshButton").addEventListener("click",async()=>{clearGetCache({keepSnapshot:true});try{await loadMeta();await loadPage(state.page)}catch(error){toast(error.message,"error")}});$("#trackSearch").addEventListener("input",debounce(renderTracks));$("#trackSort").addEventListener("change",renderTracks);$("#tracksBody").addEventListener("click",e=>{const b=e.target.closest("[data-track-open]");if(b)loadTrackDetail(b.dataset.trackOpen)});$("#trackBackButton").addEventListener("click",closeTrackDetail);$$("#trackRangeControl button").forEach(b=>b.addEventListener("click",()=>{state.trackRange=b.dataset.range;$$("#trackRangeControl button").forEach(x=>x.classList.toggle("active",x===b));renderTrackDetailCharts()}));const rr=debounce(()=>{state.recordPage=1;loadRecords()});for(const id of ["recordSearch","recordDistributor","recordPlatform","recordCountBasis"])$("#"+id).addEventListener(id==="recordSearch"?"input":"change",rr);$("#prevPage").addEventListener("click",()=>{if(state.recordPage>1){state.recordPage--;loadRecords()}});$("#nextPage").addEventListener("click",()=>{if(state.recordPage<state.recordPages){state.recordPage++;loadRecords()}});$("#recordsBody").addEventListener("click",e=>{const edit=e.target.closest("[data-digital-edit]");if(edit){const row=digitalRecordRows.get(edit.dataset.digitalEdit);if(row)openDigitalManual(row);return}const b=e.target.closest("[data-delete-id]");if(b)deleteRecord(Number(b.dataset.deleteId))});$("#exportCsvButton").addEventListener("click",exportCsv);$("#openManualButton").addEventListener("click",()=>$("#manualDialog").showModal());$("#manualForm").addEventListener("submit",saveManual);$$("[data-close-dialog]").forEach(b=>b.addEventListener("click",()=>{if(b.dataset.closeDialog==="digitalManualDialog"&&digitalManualBusy)return;$("#"+b.dataset.closeDialog).close()}));$("#openDigitalManualButton").addEventListener("click",()=>openDigitalManual());$("#digitalManualForm").addEventListener("submit",saveDigitalManual);$("#copyDigitalLoginIdButton").addEventListener("click",copyDigitalLoginId);$("#digitalAccountLink").addEventListener("click",e=>{if(digitalManualBusy)e.preventDefault()});$("#digitalManualForm").elements.settlement_ym.addEventListener("change",updateDigitalOccurrence);$("#digitalManualDialog").addEventListener("cancel",e=>{if(digitalManualBusy)e.preventDefault()});$("#fileInput").addEventListener("change",e=>handleFiles(e.target.files));$("#csvPeriodFields").addEventListener("input",handleCsvPeriodChange);$("#csvPeriodFields").addEventListener("change",handleCsvPeriodChange);const dz=$("#dropZone");for(const ev of ["dragenter","dragover"])dz.addEventListener(ev,e=>{e.preventDefault();dz.classList.add("drag")});for(const ev of ["dragleave","drop"])dz.addEventListener(ev,e=>{e.preventDefault();dz.classList.remove("drag")});dz.addEventListener("drop",e=>handleFiles(e.dataTransfer.files));$("#importButton").addEventListener("click",importRows)}
   document.addEventListener("DOMContentLoaded",()=>{bind();checkStatus()});
 })();
